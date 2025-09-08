@@ -49,6 +49,11 @@ interface IShadowSwapAVS {
     function registerOperator() external;
 
     /**
+     * @notice Register a specific address as an AVS operator
+     */
+    function registerOperatorForAddress(address operator) external;
+
+    /**
      * @notice Deregister an operator
      */
     function deregisterOperator() external;

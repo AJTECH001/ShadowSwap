@@ -9,20 +9,13 @@ import {BalanceDelta, BalanceDeltaLibrary} from "@uniswap/v4-core/src/types/Bala
 import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "@uniswap/v4-core/src/types/BeforeSwapDelta.sol";
 import {SwapParams} from "@uniswap/v4-core/src/types/PoolOperation.sol";
 import {LPFeeLibrary} from "@uniswap/v4-core/src/libraries/LPFeeLibrary.sol";
-
-// TODO: Re-enable when cofhe-contracts library is compatible with 0.8.26
-// Fhenix imports  
-// import {FHE, euint64, ebool, euint32} from "@fhenixprotocol/cofhe-contracts/FHE.sol";
-
-// EigenLayer imports
-import {IShadowSwapAVS} from "./interfaces/IShadowSwapAVS.sol";
+import {IShadowSwapAVS} from "../../src/interfaces/IShadowSwapAVS.sol";
 
 /**
- * @title ShadowSwapHook
- * @notice Privacy-preserving Uniswap v4 hook with MEV protection
- * @dev Integrates Fhenix FHE for encrypted orders and EigenLayer AVS for cross-chain coordination
+ * @title MockShadowSwapHook
+ * @notice Test version of ShadowSwapHook that bypasses address validation
  */
-contract ShadowSwapHook is BaseHook {
+contract MockShadowSwapHook is BaseHook {
     using LPFeeLibrary for uint24;
 
     // ===== STATE VARIABLES =====
@@ -43,10 +36,6 @@ contract ShadowSwapHook is BaseHook {
 
     /// @notice Encrypted order data
     struct EncryptedOrder {
-        // TODO: Re-enable when cofhe-contracts library is compatible with 0.8.26
-        // euint64 encryptedAmount; // Encrypted swap amount
-        // ebool isZeroForOne; // Encrypted swap direction
-        // euint32 blockNumber; // Block when order was placed
         uint64 amount; // Swap amount (placeholder)
         bool zeroForOne; // Swap direction (placeholder)
         uint32 blockNumber; // Block when order was placed
@@ -89,6 +78,11 @@ contract ShadowSwapHook is BaseHook {
     constructor(IPoolManager _poolManager, IShadowSwapAVS _shadowSwapAVS) BaseHook(_poolManager) {
         shadowSwapAVS = _shadowSwapAVS;
     }
+
+    // ===== ADDRESS VALIDATION BYPASS =====
+
+    /// @dev Disable address validation for testing
+    function validateHookAddress(BaseHook) internal pure override {}
 
     // ===== HOOK PERMISSIONS =====
 

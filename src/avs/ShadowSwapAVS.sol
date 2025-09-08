@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
-import {IAllocationManager} from "eigenlayer-contracts/src/contracts/interfaces/IAllocationManager.sol";
-import {IRewardsCoordinator} from "eigenlayer-contracts/src/contracts/interfaces/IRewardsCoordinator.sol";
-import {IStrategy} from "eigenlayer-contracts/src/contracts/interfaces/IStrategy.sol";
-import {IERC20} from "openzeppelin-contracts/token/ERC20/IERC20.sol";
-import {EnumerableSet} from "openzeppelin-contracts/utils/structs/EnumerableSet.sol";
+// TODO: Re-enable when EigenLayer contracts support 0.8.26
+// import {IAllocationManager} from "eigenlayer-contracts/src/contracts/interfaces/IAllocationManager.sol";
+// import {IRewardsCoordinator} from "eigenlayer-contracts/src/contracts/interfaces/IRewardsCoordinator.sol";
+// import {IStrategy} from "eigenlayer-contracts/src/contracts/interfaces/IStrategy.sol";
+import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
+import {EnumerableSet} from "openzeppelin-contracts/contracts/utils/structs/EnumerableSet.sol";
 
 contract ShadowSwapAVS {
     using EnumerableSet for EnumerableSet.AddressSet;
@@ -38,8 +39,11 @@ contract ShadowSwapAVS {
         uint96[] totalStakeForQuorum;
     }
 
-    IAllocationManager public immutable allocationManager;
-    IRewardsCoordinator public immutable rewardsCoordinator;
+    // TODO: Re-enable when EigenLayer contracts support 0.8.26
+    // IAllocationManager public immutable allocationManager;
+    // IRewardsCoordinator public immutable rewardsCoordinator;
+    address public immutable allocationManager;
+    address public immutable rewardsCoordinator;
     
     uint32 public latestTaskNum;
     
@@ -85,8 +89,8 @@ contract ShadowSwapAVS {
     event OperatorDeregistered(address indexed operator);
 
     constructor(
-        IAllocationManager _allocationManager,
-        IRewardsCoordinator _rewardsCoordinator
+        address _allocationManager,
+        address _rewardsCoordinator
     ) {
         allocationManager = _allocationManager;
         rewardsCoordinator = _rewardsCoordinator;
@@ -101,6 +105,14 @@ contract ShadowSwapAVS {
         registeredOperators.add(msg.sender);
         
         emit OperatorRegistered(msg.sender);
+    }
+
+    function registerOperatorForAddress(address operator) external {
+        require(!registeredOperators.contains(operator), "Operator already registered");
+        
+        registeredOperators.add(operator);
+        
+        emit OperatorRegistered(operator);
     }
 
     function deregisterOperator() external {

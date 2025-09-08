@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
-import {IDelegationManager} from "eigenlayer-contracts/src/contracts/interfaces/IDelegationManager.sol";
-import {IAllocationManager} from "eigenlayer-contracts/src/contracts/interfaces/IAllocationManager.sol";
-import {ISignatureUtilsMixin} from "eigenlayer-contracts/src/contracts/interfaces/ISignatureUtilsMixin.sol";
-import {IStrategy} from "eigenlayer-contracts/src/contracts/interfaces/IStrategy.sol";
-import {IERC20} from "openzeppelin-contracts/token/ERC20/IERC20.sol";
-import {ECDSA} from "openzeppelin-contracts/utils/cryptography/ECDSA.sol";
+// TODO: Re-enable when EigenLayer contracts support 0.8.26
+// import {IDelegationManager} from "eigenlayer-contracts/src/contracts/interfaces/IDelegationManager.sol";
+// import {IAllocationManager} from "eigenlayer-contracts/src/contracts/interfaces/IAllocationManager.sol";
+// import {ISignatureUtilsMixin} from "eigenlayer-contracts/src/contracts/interfaces/ISignatureUtilsMixin.sol";
+// import {IStrategy} from "eigenlayer-contracts/src/contracts/interfaces/IStrategy.sol";
+import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
+import {ECDSA} from "openzeppelin-contracts/contracts/utils/cryptography/ECDSA.sol";
+import {MessageHashUtils} from "openzeppelin-contracts/contracts/utils/cryptography/MessageHashUtils.sol";
 
 import {IShadowSwapAVS} from "../interfaces/IShadowSwapAVS.sol";
 
@@ -32,8 +34,11 @@ contract ShadowSwapOperator {
         uint256 timestamp;
     }
 
-    IDelegationManager public immutable delegationManager;
-    IAllocationManager public immutable allocationManager;
+    // TODO: Re-enable when EigenLayer contracts support 0.8.26
+    // IDelegationManager public immutable delegationManager;
+    // IAllocationManager public immutable allocationManager;
+    address public immutable delegationManager;
+    address public immutable allocationManager;
     IShadowSwapAVS public immutable shadowSwapAVS;
 
     mapping(address => OperatorInfo) public operatorInfo;
@@ -73,8 +78,8 @@ contract ShadowSwapOperator {
     event OperatorRewarded(address indexed operator, uint256 amount);
 
     constructor(
-        IDelegationManager _delegationManager,
-        IAllocationManager _allocationManager,
+        address _delegationManager,
+        address _allocationManager,
         IShadowSwapAVS _shadowSwapAVS
     ) {
         delegationManager = _delegationManager;
@@ -90,17 +95,18 @@ contract ShadowSwapOperator {
         require(!registeredOperators[msg.sender], "Already registered");
         require(bytes(metadataURI).length > 0, "Invalid metadata URI");
 
+        // TODO: Re-enable when EigenLayer contracts support 0.8.26
         // Register with EigenLayer DelegationManager
-        IDelegationManager.OperatorDetails memory operatorDetails = IDelegationManager.OperatorDetails({
-            __deprecated_earningsReceiver: msg.sender,
-            delegationApprover: address(0),
-            stakerOptOutWindowBlocks: 0
-        });
+        // IDelegationManager.OperatorDetails memory operatorDetails = IDelegationManager.OperatorDetails({
+        //     __deprecated_earningsReceiver: msg.sender,
+        //     delegationApprover: address(0),
+        //     stakerOptOutWindowBlocks: 0
+        // });
 
-        delegationManager.registerAsOperator(operatorDetails, metadataURI);
+        // delegationManager.registerAsOperator(operatorDetails, metadataURI);
 
         // Register with ShadowSwap AVS
-        shadowSwapAVS.registerOperator();
+        shadowSwapAVS.registerOperatorForAddress(msg.sender);
 
         // Initialize operator info
         operatorInfo[msg.sender] = OperatorInfo({
@@ -145,7 +151,7 @@ contract ShadowSwapOperator {
         bytes32 messageHash = keccak256(
             abi.encodePacked(taskIndex, poolKey, actualRedistribution, isValid)
         );
-        bytes32 ethSignedMessageHash = messageHash.toEthSignedMessageHash();
+        bytes32 ethSignedMessageHash = MessageHashUtils.toEthSignedMessageHash(messageHash);
         address signer = ethSignedMessageHash.recover(signature);
         require(signer == msg.sender, "Invalid signature");
 
@@ -228,7 +234,9 @@ contract ShadowSwapOperator {
         address staker,
         address operator
     ) external view returns (bool) {
-        return delegationManager.delegatedTo(staker) == operator;
+        // TODO: Re-enable when EigenLayer contracts support 0.8.26
+        // return delegationManager.delegatedTo(staker) == operator;
+        return false; // Placeholder
     }
 
     function getOperatorStake(address operator) external view returns (uint256) {

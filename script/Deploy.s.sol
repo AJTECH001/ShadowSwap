@@ -11,10 +11,12 @@ import {Currency} from "v4-core/types/Currency.sol";
 import {PoolKey} from "v4-core/types/PoolKey.sol";
 import {Hooks} from "v4-core/libraries/Hooks.sol";
 import {LPFeeLibrary} from "v4-core/libraries/LPFeeLibrary.sol";
+import {HookMiner} from "@uniswap/v4-periphery/src/utils/HookMiner.sol";
 
 // Our contracts
 import {ShadowSwapHook} from "../src/ShadowSwapHook.sol";
 import {MockShadowSwapAVS} from "../test/mocks/MockShadowSwapAVS.sol";
+import {IShadowSwapAVS} from "../src/interfaces/IShadowSwapAVS.sol";
 
 /**
  * @title DeployShadowSwap
@@ -104,7 +106,7 @@ contract DeployShadowSwap is Script {
         // Step 1: Deploy or use existing PoolManager
         if (config.poolManager == address(0)) {
             console.log("Deploying new PoolManager...");
-            PoolManager poolManager = new PoolManager();
+            PoolManager poolManager = new PoolManager(vm.addr(config.deployerKey));
             config.poolManager = address(poolManager);
         }
         console.log("PoolManager:", config.poolManager);
@@ -117,30 +119,38 @@ contract DeployShadowSwap is Script {
         }
         console.log("AVS Address:", config.avsAddress);
 
-        // Step 3: Calculate hook deployment address with required flags
-        address hookAddress = _calculateHookAddress();
-        console.log("Calculated hook address:", hookAddress);
-
-        // Step 4: Deploy hook to calculated address
-        console.log("Deploying ShadowSwap Hook...");
-
-        bytes memory creationCode = abi.encodePacked(
-            type(ShadowSwapHook).creationCode, abi.encode(IPoolManager(config.poolManager), config.avsAddress)
+        // Step 3: Calculate hook deployment address with required flags using HookMiner
+        console.log("Mining hook address with required permissions...");
+        
+        uint160 flags = uint160(
+            Hooks.BEFORE_INITIALIZE_FLAG | 
+            Hooks.BEFORE_SWAP_FLAG | 
+            Hooks.AFTER_SWAP_FLAG | 
+            Hooks.AFTER_ADD_LIQUIDITY_FLAG
         );
 
-        address deployedHook;
-        assembly {
-            deployedHook :=
-                create2(
-                    0,
-                    add(creationCode, 0x20),
-                    mload(creationCode),
-                    0 // salt
-                )
-        }
+        // Create2 deployer proxy address (used in forge script)
+        address deployer = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
+        
+        (address hookAddress, bytes32 salt) = HookMiner.find(
+            deployer,
+            flags,
+            type(ShadowSwapHook).creationCode,
+            abi.encode(IPoolManager(config.poolManager), config.avsAddress)
+        );
+        
+        console.log("Found valid hook address:", hookAddress);
+        console.log("Using salt:", uint256(salt));
 
-        require(deployedHook == hookAddress, "Hook deployed to wrong address");
-        hook = ShadowSwapHook(deployedHook);
+        // Step 4: Deploy hook using CREATE2 with the mined salt
+        console.log("Deploying ShadowSwap Hook...");
+
+        hook = new ShadowSwapHook{salt: salt}(
+            IPoolManager(config.poolManager), 
+            IShadowSwapAVS(config.avsAddress)
+        );
+
+        require(address(hook) == hookAddress, "Hook deployed to wrong address");
 
         console.log("ShadowSwap Hook deployed to:", address(hook));
 
@@ -155,17 +165,6 @@ contract DeployShadowSwap is Script {
         console.log("ShadowSwap deployment completed successfully!");
     }
 
-    /**
-     * @notice Calculate hook deployment address with required permission flags
-     */
-    function _calculateHookAddress() internal view returns (address) {
-        uint160 flags = uint160(
-            Hooks.BEFORE_INITIALIZE_FLAG | Hooks.BEFORE_SWAP_FLAG | Hooks.AFTER_SWAP_FLAG
-                | Hooks.AFTER_ADD_LIQUIDITY_FLAG
-        );
-
-        return address(flags);
-    }
 
     /**
      * @notice Verify that deployment was successful
@@ -209,11 +208,11 @@ contract DeployShadowSwap is Script {
         console.log("Matching Window:", hook.MATCHING_WINDOW(), "blocks");
         console.log("");
         console.log("INTEGRATION STATUS:");
-        console.log("✓ Uniswap v4 Hook deployed");
-        console.log("✓ EigenLayer AVS connected");
-        console.log("✓ Fhenix FHE libraries integrated");
-        console.log("✓ MEV redistribution configured");
-        console.log("✓ Cross-chain coordination enabled");
+        console.log("* Uniswap v4 Hook deployed");
+        console.log("* EigenLayer AVS connected");
+        console.log("* Fhenix FHE libraries integrated");
+        console.log("* MEV redistribution configured");
+        console.log("* Cross-chain coordination enabled");
         console.log("========================================\n");
     }
 
@@ -253,7 +252,7 @@ contract DeployShadowSwap is Script {
 
         vm.startBroadcast(config.deployerKey);
 
-        mockAVS.registerOperator("");
+        mockAVS.registerOperator();
 
         console.log("Registered as AVS operator:", vm.addr(config.deployerKey));
 
