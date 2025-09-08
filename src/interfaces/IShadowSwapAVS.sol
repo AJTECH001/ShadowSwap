@@ -45,9 +45,8 @@ interface IShadowSwapAVS {
 
     /**
      * @notice Register as an AVS operator
-     * @param operatorSignature Signature proving operator control
      */
-    function registerOperator(bytes calldata operatorSignature) external;
+    function registerOperator() external;
 
     /**
      * @notice Deregister an operator
