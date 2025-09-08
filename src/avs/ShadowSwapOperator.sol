@@ -69,29 +69,19 @@ contract ShadowSwapOperator {
     event OperatorDeregistered(address indexed operator);
     event OperatorStatusUpdated(address indexed operator, bool isActive);
     event TaskSubmitted(
-        address indexed operator,
-        uint32 indexed taskIndex,
-        bytes32 poolKey,
-        uint256 actualRedistribution
+        address indexed operator, uint32 indexed taskIndex, bytes32 poolKey, uint256 actualRedistribution
     );
     event OperatorSlashed(address indexed operator, uint256 amount, string reason);
     event OperatorRewarded(address indexed operator, uint256 amount);
 
-    constructor(
-        address _delegationManager,
-        address _allocationManager,
-        IShadowSwapAVS _shadowSwapAVS
-    ) {
+    constructor(address _delegationManager, address _allocationManager, IShadowSwapAVS _shadowSwapAVS) {
         delegationManager = _delegationManager;
         allocationManager = _allocationManager;
         shadowSwapAVS = _shadowSwapAVS;
         owner = msg.sender;
     }
 
-    function registerAsOperator(
-        string calldata metadataURI,
-        uint32 operatorId
-    ) external {
+    function registerAsOperator(string calldata metadataURI, uint32 operatorId) external {
         require(!registeredOperators[msg.sender], "Already registered");
         require(bytes(metadataURI).length > 0, "Invalid metadata URI");
 
@@ -142,15 +132,10 @@ contract ShadowSwapOperator {
         bool isValid,
         bytes calldata signature
     ) external onlyActiveOperator {
-        require(
-            taskSubmissions[taskIndex][msg.sender].timestamp == 0,
-            "Task already submitted"
-        );
+        require(taskSubmissions[taskIndex][msg.sender].timestamp == 0, "Task already submitted");
 
         // Verify the signature
-        bytes32 messageHash = keccak256(
-            abi.encodePacked(taskIndex, poolKey, actualRedistribution, isValid)
-        );
+        bytes32 messageHash = keccak256(abi.encodePacked(taskIndex, poolKey, actualRedistribution, isValid));
         bytes32 ethSignedMessageHash = MessageHashUtils.toEthSignedMessageHash(messageHash);
         address signer = ethSignedMessageHash.recover(signature);
         require(signer == msg.sender, "Invalid signature");
@@ -176,10 +161,7 @@ contract ShadowSwapOperator {
         emit TaskSubmitted(msg.sender, taskIndex, poolKey, actualRedistribution);
     }
 
-    function getTaskSubmission(
-        uint32 taskIndex,
-        address operator
-    ) external view returns (TaskSubmission memory) {
+    function getTaskSubmission(uint32 taskIndex, address operator) external view returns (TaskSubmission memory) {
         return taskSubmissions[taskIndex][operator];
     }
 
@@ -193,16 +175,12 @@ contract ShadowSwapOperator {
         emit OperatorStatusUpdated(operator, isActive);
     }
 
-    function slashOperator(
-        address operator,
-        uint256 amount,
-        string calldata reason
-    ) external onlyOwner {
+    function slashOperator(address operator, uint256 amount, string calldata reason) external onlyOwner {
         require(registeredOperators[operator], "Operator not registered");
         require(operatorStake[operator] >= amount, "Insufficient stake to slash");
 
         operatorStake[operator] -= amount;
-        
+
         // Mark operator as inactive if heavily slashed
         if (operatorStake[operator] < MINIMUM_STAKE) {
             operatorInfo[operator].isActive = false;
@@ -217,12 +195,11 @@ contract ShadowSwapOperator {
         emit OperatorRewarded(operator, amount);
     }
 
-    function getOperatorPerformance(address operator) external view returns (
-        uint256 successfulTasks,
-        uint256 totalTasks,
-        uint256 successRate,
-        uint256 lastTaskCompleted
-    ) {
+    function getOperatorPerformance(address operator)
+        external
+        view
+        returns (uint256 successfulTasks, uint256 totalTasks, uint256 successRate, uint256 lastTaskCompleted)
+    {
         OperatorInfo memory info = operatorInfo[operator];
         successfulTasks = info.successfulTasks;
         totalTasks = info.totalTasks;
@@ -230,10 +207,7 @@ contract ShadowSwapOperator {
         lastTaskCompleted = info.lastTaskCompleted;
     }
 
-    function isDelegatedToOperator(
-        address staker,
-        address operator
-    ) external view returns (bool) {
+    function isDelegatedToOperator(address staker, address operator) external view returns (bool) {
         // TODO: Re-enable when EigenLayer contracts support 0.8.26
         // return delegationManager.delegatedTo(staker) == operator;
         return false; // Placeholder

@@ -53,14 +53,14 @@ contract MockShadowSwapAVS is IShadowSwapAVS {
     {
         winner = auctionWinners[poolId][blockNumber];
         winningBid = winningBids[poolId][blockNumber];
-        
+
         if (winner == address(0)) {
             winner = msg.sender;
             winningBid = 1000; // Default bid amount for testing
             auctionWinners[poolId][blockNumber] = winner;
             winningBids[poolId][blockNumber] = winningBid;
         }
-        
+
         emit MEVAuctionCompleted(poolId, winner, winningBid);
     }
 

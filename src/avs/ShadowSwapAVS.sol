@@ -44,33 +44,33 @@ contract ShadowSwapAVS {
     // IRewardsCoordinator public immutable rewardsCoordinator;
     address public immutable allocationManager;
     address public immutable rewardsCoordinator;
-    
+
     uint32 public latestTaskNum;
-    
+
     mapping(uint32 => bytes32) public allTaskHashes;
     mapping(uint32 => bytes32) public allTaskResponses;
     mapping(uint32 => bool) public taskSuccesfullyChallenged;
-    
+
     EnumerableSet.AddressSet private registeredOperators;
-    
+
     uint256 public constant TASK_RESPONSE_WINDOW_BLOCK = 30;
     uint32 public constant TASK_CHALLENGE_WINDOW_BLOCK = 100;
     uint256 public constant THRESHOLD_DENOMINATOR = 100;
-    
+
     address public taskGenerator;
     address public aggregator;
     address public challenger;
-    
+
     modifier onlyTaskGenerator() {
         require(msg.sender == taskGenerator, "Only task generator");
         _;
     }
-    
+
     modifier onlyAggregator() {
         require(msg.sender == aggregator, "Only aggregator");
         _;
     }
-    
+
     modifier onlyChallenger() {
         require(msg.sender == challenger, "Only challenger");
         _;
@@ -78,9 +78,7 @@ contract ShadowSwapAVS {
 
     event NewMEVTask(uint32 indexed taskIndex, MEVTask task);
     event MEVTaskResponded(
-        uint32 indexed taskIndex,
-        MEVTaskResponse taskResponse,
-        MEVTaskResponseMetadata taskResponseMetadata
+        uint32 indexed taskIndex, MEVTaskResponse taskResponse, MEVTaskResponseMetadata taskResponseMetadata
     );
     event TaskCompleted(uint32 indexed taskIndex);
     event TaskChallengedSuccessfully(uint32 indexed taskIndex, address indexed challenger);
@@ -88,10 +86,7 @@ contract ShadowSwapAVS {
     event OperatorRegistered(address indexed operator);
     event OperatorDeregistered(address indexed operator);
 
-    constructor(
-        address _allocationManager,
-        address _rewardsCoordinator
-    ) {
+    constructor(address _allocationManager, address _rewardsCoordinator) {
         allocationManager = _allocationManager;
         rewardsCoordinator = _rewardsCoordinator;
         taskGenerator = msg.sender;
@@ -101,25 +96,25 @@ contract ShadowSwapAVS {
 
     function registerOperator() external {
         require(!registeredOperators.contains(msg.sender), "Operator already registered");
-        
+
         registeredOperators.add(msg.sender);
-        
+
         emit OperatorRegistered(msg.sender);
     }
 
     function registerOperatorForAddress(address operator) external {
         require(!registeredOperators.contains(operator), "Operator already registered");
-        
+
         registeredOperators.add(operator);
-        
+
         emit OperatorRegistered(operator);
     }
 
     function deregisterOperator() external {
         require(registeredOperators.contains(msg.sender), "Operator not registered");
-        
+
         registeredOperators.remove(msg.sender);
-        
+
         emit OperatorDeregistered(msg.sender);
     }
 
@@ -149,24 +144,18 @@ contract ShadowSwapAVS {
         MEVTaskResponseMetadata calldata taskResponseMetadata
     ) external onlyAggregator {
         uint32 taskIndex = taskResponse.referenceTaskIndex;
-        
-        require(
-            keccak256(abi.encode(task)) == allTaskHashes[taskIndex],
-            "Task does not match"
-        );
-        require(
-            allTaskResponses[taskIndex] == bytes32(0),
-            "Aggregator has already responded to the task"
-        );
+
+        require(keccak256(abi.encode(task)) == allTaskHashes[taskIndex], "Task does not match");
+        require(allTaskResponses[taskIndex] == bytes32(0), "Aggregator has already responded to the task");
         require(
             uint32(block.number) <= task.taskCreatedBlock + TASK_RESPONSE_WINDOW_BLOCK,
             "Aggregator has not responded to the task within the response window"
         );
 
         bytes32 message = keccak256(abi.encode(taskResponse));
-        
+
         allTaskResponses[taskIndex] = message;
-        
+
         emit MEVTaskResponded(taskIndex, taskResponse, taskResponseMetadata);
         emit TaskCompleted(taskIndex);
     }
@@ -178,54 +167,45 @@ contract ShadowSwapAVS {
         address[] memory pubkeysOfNonSigningOperators
     ) external onlyChallenger {
         uint32 referenceTaskIndex = taskResponse.referenceTaskIndex;
+        require(allTaskResponses[referenceTaskIndex] != bytes32(0), "Task has not been responded to");
+        require(!taskSuccesfullyChallenged[referenceTaskIndex], "Task has already been challenged successfully");
         require(
-            allTaskResponses[referenceTaskIndex] != bytes32(0),
-            "Task has not been responded to"
-        );
-        require(
-            !taskSuccesfullyChallenged[referenceTaskIndex],
-            "Task has already been challenged successfully"
-        );
-        require(
-            uint32(block.number) <= task.taskCreatedBlock + TASK_CHALLENGE_WINDOW_BLOCK,
-            "Challenge window has expired"
+            uint32(block.number) <= task.taskCreatedBlock + TASK_CHALLENGE_WINDOW_BLOCK, "Challenge window has expired"
         );
 
         bytes32 message = keccak256(abi.encode(taskResponse));
-        require(
-            message == allTaskResponses[referenceTaskIndex],
-            "Task response does not match"
-        );
+        require(message == allTaskResponses[referenceTaskIndex], "Task response does not match");
 
         bool taskValid = _validateMEVTask(task, taskResponse);
-        
+
         if (!taskValid) {
             taskSuccesfullyChallenged[referenceTaskIndex] = true;
-            
+
             _slashOperators(pubkeysOfNonSigningOperators);
-            
+
             emit TaskChallengedSuccessfully(referenceTaskIndex, msg.sender);
         } else {
             emit TaskChallengedUnsuccessfully(referenceTaskIndex, msg.sender);
         }
     }
 
-    function _validateMEVTask(
-        MEVTask calldata task,
-        MEVTaskResponse calldata taskResponse
-    ) internal pure returns (bool) {
+    function _validateMEVTask(MEVTask calldata task, MEVTaskResponse calldata taskResponse)
+        internal
+        pure
+        returns (bool)
+    {
         if (taskResponse.poolKey != task.poolKey) {
             return false;
         }
-        
+
         uint256 redistributionTolerance = task.expectedRedistribution / 100; // 1% tolerance
         if (
-            taskResponse.actualRedistribution < task.expectedRedistribution - redistributionTolerance ||
-            taskResponse.actualRedistribution > task.expectedRedistribution + redistributionTolerance
+            taskResponse.actualRedistribution < task.expectedRedistribution - redistributionTolerance
+                || taskResponse.actualRedistribution > task.expectedRedistribution + redistributionTolerance
         ) {
             return false;
         }
-        
+
         return taskResponse.isValid;
     }
 

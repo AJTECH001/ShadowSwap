@@ -121,34 +121,29 @@ contract DeployShadowSwap is Script {
 
         // Step 3: Calculate hook deployment address with required flags using HookMiner
         console.log("Mining hook address with required permissions...");
-        
+
         uint160 flags = uint160(
-            Hooks.BEFORE_INITIALIZE_FLAG | 
-            Hooks.BEFORE_SWAP_FLAG | 
-            Hooks.AFTER_SWAP_FLAG | 
-            Hooks.AFTER_ADD_LIQUIDITY_FLAG
+            Hooks.BEFORE_INITIALIZE_FLAG | Hooks.BEFORE_SWAP_FLAG | Hooks.AFTER_SWAP_FLAG
+                | Hooks.AFTER_ADD_LIQUIDITY_FLAG
         );
 
         // Create2 deployer proxy address (used in forge script)
         address deployer = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
-        
+
         (address hookAddress, bytes32 salt) = HookMiner.find(
             deployer,
             flags,
             type(ShadowSwapHook).creationCode,
             abi.encode(IPoolManager(config.poolManager), config.avsAddress)
         );
-        
+
         console.log("Found valid hook address:", hookAddress);
         console.log("Using salt:", uint256(salt));
 
         // Step 4: Deploy hook using CREATE2 with the mined salt
         console.log("Deploying ShadowSwap Hook...");
 
-        hook = new ShadowSwapHook{salt: salt}(
-            IPoolManager(config.poolManager), 
-            IShadowSwapAVS(config.avsAddress)
-        );
+        hook = new ShadowSwapHook{salt: salt}(IPoolManager(config.poolManager), IShadowSwapAVS(config.avsAddress));
 
         require(address(hook) == hookAddress, "Hook deployed to wrong address");
 
@@ -164,7 +159,6 @@ contract DeployShadowSwap is Script {
 
         console.log("ShadowSwap deployment completed successfully!");
     }
-
 
     /**
      * @notice Verify that deployment was successful

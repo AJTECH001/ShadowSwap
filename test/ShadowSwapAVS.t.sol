@@ -21,13 +21,13 @@ contract ShadowSwapAVSTest is Test {
         // Deploy AVS with placeholder addresses for EigenLayer contracts
         avs = new ShadowSwapAVS(
             address(0x1), // placeholder allocation manager
-            address(0x2)  // placeholder rewards coordinator
+            address(0x2) // placeholder rewards coordinator
         );
 
         // Deploy operator contract
         operatorContract = new ShadowSwapOperator(
             address(0x3), // placeholder delegation manager
-            address(0x1), // placeholder allocation manager  
+            address(0x1), // placeholder allocation manager
             IShadowSwapAVS(address(avs))
         );
 
@@ -39,10 +39,10 @@ contract ShadowSwapAVSTest is Test {
 
         // Register operator
         avs.registerOperator();
-        
+
         // Verify registration
         assertTrue(avs.isOperatorRegistered(operator1));
-        
+
         // Check operator list
         address[] memory operators = avs.getRegisteredOperators();
         assertEq(operators.length, 1);
@@ -75,13 +75,7 @@ contract ShadowSwapAVSTest is Test {
         bytes memory quorumNumbers = abi.encode(uint8(0));
 
         // Create task
-        avs.createNewTask(
-            poolKey,
-            encryptedData,
-            expectedRedistribution,
-            quorumThreshold,
-            quorumNumbers
-        );
+        avs.createNewTask(poolKey, encryptedData, expectedRedistribution, quorumThreshold, quorumNumbers);
 
         // Verify task was created
         assertEq(avs.latestTaskNum(), 1);
@@ -97,13 +91,7 @@ contract ShadowSwapAVSTest is Test {
         bytes memory encryptedData = "encrypted-order-data";
         uint256 expectedRedistribution = 1000;
 
-        avs.createNewTask(
-            poolKey,
-            encryptedData,
-            expectedRedistribution,
-            66,
-            abi.encode(uint8(0))
-        );
+        avs.createNewTask(poolKey, encryptedData, expectedRedistribution, 66, abi.encode(uint8(0)));
 
         // Prepare task response
         ShadowSwapAVS.MEVTask memory task = ShadowSwapAVS.MEVTask({
@@ -183,7 +171,7 @@ contract ShadowSwapAVSTest is Test {
         vm.startPrank(challenger);
 
         address[] memory nonSigningOperators = new address[](0);
-        
+
         avs.raiseAndResolveChallenge(task, response, metadata, nonSigningOperators);
 
         // Verify challenge was successful
@@ -220,19 +208,13 @@ contract ShadowSwapAVSTest is Test {
         // Create a proper signature using vm.sign
         bytes32 messageHash = keccak256(abi.encodePacked(taskIndex, poolKey, actualRedistribution, isValid));
         bytes32 ethSignedMessageHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", messageHash));
-        
+
         uint256 privateKey = 0x1234567890123456789012345678901234567890123456789012345678901234;
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(privateKey, ethSignedMessageHash);
         bytes memory signature = abi.encodePacked(r, s, v);
 
         // Submit task response
-        operatorContract.submitTaskResponse(
-            taskIndex,
-            poolKey,
-            actualRedistribution,
-            isValid,
-            signature
-        );
+        operatorContract.submitTaskResponse(taskIndex, poolKey, actualRedistribution, isValid, signature);
 
         // Verify task submission was recorded
         ShadowSwapOperator.TaskSubmission memory submission = operatorContract.getTaskSubmission(taskIndex, operator1);
@@ -249,9 +231,9 @@ contract ShadowSwapAVSTest is Test {
         operatorContract.registerAsOperator("https://operator1-metadata.com", 1);
 
         // Get initial performance
-        (uint256 successful, uint256 total, uint256 rate, uint256 lastCompleted) = 
+        (uint256 successful, uint256 total, uint256 rate, uint256 lastCompleted) =
             operatorContract.getOperatorPerformance(operator1);
-        
+
         assertEq(successful, 0);
         assertEq(total, 0);
         assertEq(rate, 0);
@@ -268,14 +250,14 @@ contract ShadowSwapAVSTest is Test {
         // Add some stake first so we can slash it
         vm.startPrank(deployer);
         operatorContract.rewardOperator(operator1, 2000); // Add stake first
-        
+
         // Slash the operator
         operatorContract.slashOperator(operator1, 1000, "Invalid task submission");
 
         // Verify operator stake was reduced
         uint256 stake = operatorContract.getOperatorStake(operator1);
         assertEq(stake, 1000); // 2000 - 1000 = 1000
-        
+
         vm.stopPrank();
     }
 

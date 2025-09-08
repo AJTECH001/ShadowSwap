@@ -11,7 +11,7 @@ import {SwapParams} from "@uniswap/v4-core/src/types/PoolOperation.sol";
 import {LPFeeLibrary} from "@uniswap/v4-core/src/libraries/LPFeeLibrary.sol";
 
 // TODO: Re-enable when cofhe-contracts library is compatible with 0.8.26
-// Fhenix imports  
+// Fhenix imports
 // import {FHE, euint64, ebool, euint32} from "@fhenixprotocol/cofhe-contracts/FHE.sol";
 
 // EigenLayer imports

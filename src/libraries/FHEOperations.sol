@@ -50,38 +50,23 @@ library FHEOperations {
         pure
         returns (EncryptedSwapData memory)
     {
-        return EncryptedSwapData({
-            amount: amount,
-            zeroForOne: zeroForOne,
-            maxSlippage: maxSlippage,
-            deadline: deadline
-        });
+        return EncryptedSwapData({amount: amount, zeroForOne: zeroForOne, maxSlippage: maxSlippage, deadline: deadline});
     }
 
     /**
      * @notice Placeholder for order matching validation
      * @dev Returns plaintext comparison as placeholder
      */
-    function canMatchOrders(EncryptedMatchData memory matchData)
-        internal
-        pure
-        returns (bool)
-    {
+    function canMatchOrders(EncryptedMatchData memory matchData) internal pure returns (bool) {
         // Simple placeholder logic
-        return matchData.direction1 != matchData.direction2 && 
-               matchData.amount1 > 0 && 
-               matchData.amount2 > 0;
+        return matchData.direction1 != matchData.direction2 && matchData.amount1 > 0 && matchData.amount2 > 0;
     }
 
     /**
      * @notice Placeholder for computing matched amount
      * @dev Returns minimum of two amounts as placeholder
      */
-    function computeMatchedAmount(uint64 amount1, uint64 amount2)
-        internal
-        pure
-        returns (uint64)
-    {
+    function computeMatchedAmount(uint64 amount1, uint64 amount2) internal pure returns (uint64) {
         return amount1 < amount2 ? amount1 : amount2;
     }
 
@@ -89,13 +74,7 @@ library FHEOperations {
      * @notice Placeholder for validating order parameters
      * @dev Basic validation without encryption
      */
-    function isValidOrder(uint64 amount, uint32 maxSlippage, uint32 deadline)
-        internal
-        view
-        returns (bool)
-    {
-        return amount >= MIN_ORDER_SIZE &&
-               maxSlippage <= MAX_SLIPPAGE_BPS &&
-               deadline > block.number;
+    function isValidOrder(uint64 amount, uint32 maxSlippage, uint32 deadline) internal view returns (bool) {
+        return amount >= MIN_ORDER_SIZE && maxSlippage <= MAX_SLIPPAGE_BPS && deadline > block.number;
     }
 }

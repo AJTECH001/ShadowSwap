@@ -116,7 +116,7 @@ contract ShadowSwapHookTest is Test {
     function testFeeCalculation() public {
         // Test that hook can calculate dynamic fees
         // This would test the MEV-based fee adjustment logic
-        
+
         uint24 baseFee = hook.BASE_FEE();
         uint24 maxAdjustment = hook.MAX_FEE_ADJUSTMENT();
 
@@ -147,12 +147,12 @@ contract ShadowSwapHookTest is Test {
         vm.startPrank(deployer);
 
         bytes32 poolId = PoolId.unwrap(key.toId());
-        
+
         // Test that MEV redistribution mappings work
         // This tests the internal storage structure
         assertTrue(address(hook) != address(0));
         assertTrue(poolId != bytes32(0));
-        
+
         vm.stopPrank();
     }
 

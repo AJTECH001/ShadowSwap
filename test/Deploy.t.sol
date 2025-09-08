@@ -8,17 +8,17 @@ import {MockShadowSwapAVS} from "../test/mocks/MockShadowSwapAVS.sol";
 
 contract DeployTest is Test {
     DeployShadowSwap deployer;
-    
+
     address deployerAddress = makeAddr("deployer");
 
     function setUp() public {
         deployer = new DeployShadowSwap();
-        
+
         // Set up environment variable for private key
         vm.setEnv("PRIVATE_KEY", "0x1234567890123456789012345678901234567890123456789012345678901234");
     }
 
-    function testLocalDeployment() public {        
+    function testLocalDeployment() public {
         // Test local deployment
         deployer.deployLocal();
 
@@ -49,9 +49,9 @@ contract DeployTest is Test {
     function testHookAddressCalculation() public {
         // Test that hook address calculation works
         deployer.deployLocal();
-        
+
         ShadowSwapHook hook = deployer.hook();
-        
+
         // Verify hook address has the correct permission flags
         uint160 hookAddress = uint160(address(hook));
         assertTrue(hookAddress > 0);
@@ -59,9 +59,9 @@ contract DeployTest is Test {
 
     function testMockAVSIntegration() public {
         deployer.deployLocal();
-        
+
         MockShadowSwapAVS mockAVS = deployer.mockAVS();
-        
+
         // Test mock AVS functionality
         vm.startPrank(deployerAddress);
         mockAVS.registerOperator();
