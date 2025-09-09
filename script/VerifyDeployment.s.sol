@@ -15,7 +15,7 @@ contract VerifyDeployment is Script {
         console.log("Network: Arbitrum Sepolia");
         console.log("Block Number:", block.number);
         console.log("Chain ID:", block.chainid);
-        
+
         // Verify Hook
         ShadowSwapHook hook = ShadowSwapHook(hookAddress);
         console.log("\n--- Hook Verification ---");
@@ -25,18 +25,18 @@ contract VerifyDeployment is Script {
         console.log("Base Fee:", hook.BASE_FEE());
         console.log("Max Fee Adjustment:", hook.MAX_FEE_ADJUSTMENT());
         console.log("Matching Window:", hook.MATCHING_WINDOW());
-        
+
         // Verify AVS
         MockShadowSwapAVS avs = MockShadowSwapAVS(avsAddress);
         console.log("\n--- AVS Verification ---");
         console.log("AVS Address:", address(avs));
-        
+
         console.log("\n[OK] All contracts verified successfully!");
         console.log("\n=== Integration Status ===");
         console.log("[+] Uniswap v4 Hook: DEPLOYED");
         console.log("[+] EigenLayer AVS: DEPLOYED (Mock)");
         console.log("[+] Fhenix FHE: READY (Placeholder)");
-        
+
         console.log("\n=== Next Steps ===");
         console.log("1. Enable FHE integration with cofhe-contracts");
         console.log("2. Deploy real EigenLayer AVS on Holesky");
