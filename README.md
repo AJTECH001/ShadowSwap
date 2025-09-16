@@ -208,11 +208,11 @@ forge test
 | **Deploy** | 4/4  | Deployment scripts, address validation |
 
 ### Key Test Scenarios:
--  **Hook Address Validation** with correct permission flags
--  **Operator Registration & Slashing** mechanisms
--  **Signature Validation** for task submissions
--  **MEV Calculation** and redistribution logic
--  **Cross-Chain State** synchronization
+-  **Hook Address Validation** with correct permission flags
+-  **Operator Registration & Slashing** mechanisms
+-  **Signature Validation** for task submissions
+-  **MEV Calculation** and redistribution logic
+-  **Cross-Chain State** synchronization
 
 ##  Local Development
 
