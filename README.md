@@ -166,9 +166,9 @@ library FHEOperations {
    - Dynamic fee adjustment based on captured MEV
 
 3.  MEV Redistribution
-   - 80% � Liquidity Providers (proportional to liquidity)
-   - 20% � Original Trader (rebate)
-   - 0% � MEV bots (eliminated)
+   - 80%  Liquidity Providers (proportional to liquidity)
+   - 20%  Original Trader (rebate)
+   - 0%  MEV bots (eliminated)
 
 4.  Cross-Chain Validation
    - EigenLayer operators validate execution
@@ -202,10 +202,10 @@ forge test
 
 | Test Suite | Tests | Coverage |
 |------------|-------|----------|
-| **ShadowSwapHook** | 9/9  | Hook permissions, fee calculation, order structures |
-| **ShadowSwapAVS** | 10/10  | Operator management, task validation, slashing |
-| **MEVRedistribution** | 10/10  | MEV capture, LP rewards, edge cases |
-| **Deploy** | 4/4  | Deployment scripts, address validation |
+| **ShadowSwapHook** | 9/9  | Hook permissions, fee calculation, order structures |
+| **ShadowSwapAVS** | 10/10  | Operator management, task validation, slashing |
+| **MEVRedistribution** | 10/10  | MEV capture, LP rewards, edge cases |
+| **Deploy** | 4/4  | Deployment scripts, address validation |
 
 ### Key Test Scenarios:
 -  **Hook Address Validation** with correct permission flags
