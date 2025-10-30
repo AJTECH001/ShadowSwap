@@ -232,22 +232,28 @@ POOL_MANAGER_ADDRESS=0x7Da1D65F8B249183667cdE74C5CBD46dD38AA829
 - [x] Basic MEV detection & redistribution
 - [x] Deployment on Arbitrum Sepolia
 
-### Phase 2: Privacy Enhancement ⏳ **IN PROGRESS**
-- [ ] Advanced encrypted order matching algorithms
-- [ ] Optimized FHE operations for gas efficiency
+### Phase 2: Privacy Enhancement = **IN PROGRESS**
+- [ ] Full Fhenix FHE integration (awaiting Solidity 0.8.26 support)
+- [ ] Advanced encrypted order matching
+- [ ] Zero-knowledge proof implementation
 - [ ] Frontend for encrypted order submission
-- [ ] Mobile wallet integration
 
-### Phase 3: Production Launch 📅 **PLANNED**
-- [ ] Mainnet deployment (Arbitrum, Base)
+### Phase 3: Cross-Chain Expansion  **PLANNED**
+- [ ] Deploy real EigenLayer AVS on Holesky
+- [ ] Multi-chain liquidity aggregation
+- [ ] Cross-chain MEV arbitrage prevention
+- [ ] Advanced operator reward mechanisms
+
+### Phase 4: Production Launch  
+- [ ] Mainnet deployment
+- [ ] Governance token launch
 - [ ] Advanced analytics dashboard
-- [ ] Liquidity mining program
-- [ ] Security audits
+- [ ] Institutional partnerships
 
 ##  Team & Contributors
 
-**Built by**: Alade Jamiu Damilola
-**Integration**: Uniswap v4 + Fhenix FHE
+**Built by**: Alade Jamiu Damilola   
+**Integration**: Uniswap v4 + EigenLayer + Fhenix
 
 ##  License
 
@@ -263,6 +269,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ##  Acknowledgments
 
 - **Uniswap Foundation** for the revolutionary v4 hooks architecture
+- **EigenLayer** for decentralized validation infrastructure  
 - **Fhenix** for fully homomorphic encryption capabilities
 - **Foundry** for the excellent development framework
 

@@ -4,7 +4,6 @@ pragma solidity 0.8.26;
 import {Test, console} from "forge-std/Test.sol";
 import {DeployShadowSwap} from "../script/Deploy.s.sol";
 import {ShadowSwapHook} from "../src/ShadowSwapHook.sol";
-import {MockShadowSwapAVS} from "../test/mocks/MockShadowSwapAVS.sol";
 
 contract DeployTest is Test {
     DeployShadowSwap deployer;
@@ -24,7 +23,6 @@ contract DeployTest is Test {
 
         // Verify contracts were deployed
         assertTrue(address(deployer.hook()) != address(0));
-        assertTrue(address(deployer.mockAVS()) != address(0));
 
         // Verify hook configuration
         ShadowSwapHook hook = deployer.hook();
@@ -37,13 +35,10 @@ contract DeployTest is Test {
         // Test deployment configuration structure
         DeployShadowSwap.DeploymentConfig memory config = DeployShadowSwap.DeploymentConfig({
             poolManager: address(0),
-            avsAddress: address(0),
-            useMockAVS: true,
             deployerKey: 0x1234567890123456789012345678901234567890123456789012345678901234
         });
 
         assertEq(config.poolManager, address(0));
-        assertTrue(config.useMockAVS);
     }
 
     function testHookAddressCalculation() public {
@@ -57,15 +52,4 @@ contract DeployTest is Test {
         assertTrue(hookAddress > 0);
     }
 
-    function testMockAVSIntegration() public {
-        deployer.deployLocal();
-
-        MockShadowSwapAVS mockAVS = deployer.mockAVS();
-
-        // Test mock AVS functionality
-        vm.startPrank(deployerAddress);
-        mockAVS.registerOperator();
-        assertTrue(mockAVS.isOperator(deployerAddress));
-        vm.stopPrank();
-    }
 }

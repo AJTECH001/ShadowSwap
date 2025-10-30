@@ -9,7 +9,6 @@ import {BalanceDelta, BalanceDeltaLibrary} from "@uniswap/v4-core/src/types/Bala
 import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "@uniswap/v4-core/src/types/BeforeSwapDelta.sol";
 import {SwapParams} from "@uniswap/v4-core/src/types/PoolOperation.sol";
 import {LPFeeLibrary} from "@uniswap/v4-core/src/libraries/LPFeeLibrary.sol";
-import {IShadowSwapAVS} from "../../src/interfaces/IShadowSwapAVS.sol";
 
 /**
  * @title MockShadowSwapHook
@@ -19,9 +18,6 @@ contract MockShadowSwapHook is BaseHook {
     using LPFeeLibrary for uint24;
 
     // ===== STATE VARIABLES =====
-
-    /// @notice EigenLayer AVS contract for cross-chain coordination
-    IShadowSwapAVS public immutable shadowSwapAVS;
 
     /// @notice Base fee charged when no MEV is captured (0.3%)
     uint24 public constant BASE_FEE = 3000;
@@ -75,8 +71,7 @@ contract MockShadowSwapHook is BaseHook {
 
     // ===== CONSTRUCTOR =====
 
-    constructor(IPoolManager _poolManager, IShadowSwapAVS _shadowSwapAVS) BaseHook(_poolManager) {
-        shadowSwapAVS = _shadowSwapAVS;
+    constructor(IPoolManager _poolManager) BaseHook(_poolManager) {
     }
 
     // ===== ADDRESS VALIDATION BYPASS =====
