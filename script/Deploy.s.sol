@@ -15,6 +15,7 @@ import {HookMiner} from "@uniswap/v4-periphery/src/utils/HookMiner.sol";
 
 // Our contracts
 import {ShadowSwapHook} from "../src/ShadowSwapHook.sol";
+import {ShadowSwapServiceManager} from "../src/avs/ShadowSwapServiceManager.sol";
 
 /**
  * @title DeployShadowSwap
@@ -33,6 +34,7 @@ contract DeployShadowSwap is Script {
 
     DeploymentConfig public config;
     ShadowSwapHook public hook;
+    ShadowSwapServiceManager public serviceManager;
 
     // ===== DEPLOYMENT ADDRESSES =====
 
@@ -100,12 +102,17 @@ contract DeployShadowSwap is Script {
         }
         console.log("PoolManager:", config.poolManager);
 
+        // Step 1.5: Deploy ServiceManager (Mock AVS Dir for now)
+        console.log("Deploying ShadowSwap ServiceManager...");
+        serviceManager = new ShadowSwapServiceManager(address(0), address(0x123)); // Placeholder hook addr 0
+        console.log("ServiceManager:", address(serviceManager));
+
         // Step 2: Calculate hook deployment address with required flags using HookMiner
         console.log("Mining hook address with required permissions...");
 
         uint160 flags = uint160(
-            Hooks.BEFORE_INITIALIZE_FLAG | Hooks.BEFORE_SWAP_FLAG | Hooks.AFTER_SWAP_FLAG
-                | Hooks.AFTER_ADD_LIQUIDITY_FLAG
+            Hooks.BEFORE_INITIALIZE_FLAG | Hooks.AFTER_INITIALIZE_FLAG | Hooks.BEFORE_SWAP_FLAG | Hooks.AFTER_SWAP_FLAG
+                | Hooks.AFTER_ADD_LIQUIDITY_FLAG | Hooks.BEFORE_SWAP_RETURNS_DELTA_FLAG
         );
 
         // Create2 deployer proxy address (used in forge script)
@@ -115,7 +122,7 @@ contract DeployShadowSwap is Script {
             deployer,
             flags,
             type(ShadowSwapHook).creationCode,
-            abi.encode(IPoolManager(config.poolManager))
+            abi.encode(IPoolManager(config.poolManager), address(serviceManager))
         );
 
         console.log("Found valid hook address:", hookAddress);
@@ -124,7 +131,7 @@ contract DeployShadowSwap is Script {
         // Step 3: Deploy hook using CREATE2 with the mined salt
         console.log("Deploying ShadowSwap Hook...");
 
-        hook = new ShadowSwapHook{salt: salt}(IPoolManager(config.poolManager));
+        hook = new ShadowSwapHook{salt: salt}(IPoolManager(config.poolManager), address(serviceManager));
 
         require(address(hook) == hookAddress, "Hook deployed to wrong address");
 
@@ -152,9 +159,11 @@ contract DeployShadowSwap is Script {
         // Verify hook permissions
         Hooks.Permissions memory permissions = hook.getHookPermissions();
         require(permissions.beforeInitialize, "Missing beforeInitialize permission");
+        require(permissions.afterInitialize, "Missing afterInitialize permission");
         require(permissions.beforeSwap, "Missing beforeSwap permission");
         require(permissions.afterSwap, "Missing afterSwap permission");
         require(permissions.afterAddLiquidity, "Missing afterAddLiquidity permission");
+        require(permissions.beforeSwapReturnDelta, "Missing beforeSwapReturnDelta permission");
 
         console.log("Deployment verification passed");
     }

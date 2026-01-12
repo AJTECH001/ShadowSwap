@@ -131,11 +131,15 @@ contract ShadowSwapHookTest is Test {
         // Verify hook has correct permissions through getHookPermissions
         Hooks.Permissions memory permissions = hook.getHookPermissions();
         assertTrue(permissions.beforeInitialize);
+        assertTrue(permissions.afterInitialize);
         assertTrue(permissions.beforeSwap);
         assertTrue(permissions.afterSwap);
         assertTrue(permissions.afterAddLiquidity);
-        assertFalse(permissions.afterInitialize);
+        assertTrue(permissions.beforeSwapReturnDelta);
+        
         assertFalse(permissions.beforeAddLiquidity);
+        assertFalse(permissions.beforeRemoveLiquidity);
+        assertFalse(permissions.afterRemoveLiquidity);
     }
 
     function testPoolKeyValidation() public {

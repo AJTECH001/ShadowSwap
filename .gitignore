@@ -1,11 +1,12 @@
 # Compiler files
 cache/
 out/
+artifacts/
+cache_hardhat/
+types/
 
-# Ignores development broadcast logs
-!/broadcast
-/broadcast/*/31337/
-/broadcast/**/dry-run/
+# Foundry broadcast logs
+broadcast/
 
 # Docs
 docs/
@@ -13,5 +14,9 @@ docs/
 # Dotenv file
 .env
 
-# Disabled dependencies
+# OS-specific files
+.DS_Store
+
+# Dependencies
+node_modules/
 lib/cofhe-contracts.disabled

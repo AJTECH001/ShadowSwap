@@ -7,7 +7,7 @@ import {Hooks} from "@uniswap/v4-core/src/libraries/Hooks.sol";
 import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 import {BalanceDelta, BalanceDeltaLibrary} from "@uniswap/v4-core/src/types/BalanceDelta.sol";
 import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "@uniswap/v4-core/src/types/BeforeSwapDelta.sol";
-import {SwapParams} from "@uniswap/v4-core/src/types/PoolOperation.sol";
+import {SwapParams, ModifyLiquidityParams} from "@uniswap/v4-core/src/types/PoolOperation.sol";
 import {LPFeeLibrary} from "@uniswap/v4-core/src/libraries/LPFeeLibrary.sol";
 
 /**
@@ -83,17 +83,17 @@ contract MockShadowSwapHook is BaseHook {
 
     function getHookPermissions() public pure override returns (Hooks.Permissions memory) {
         return Hooks.Permissions({
-            beforeInitialize: true, // Validates pool supports dynamic fees
-            afterInitialize: false,
+            beforeInitialize: true,
+            afterInitialize: true,
             beforeAddLiquidity: false,
             beforeRemoveLiquidity: false,
-            afterAddLiquidity: true, // For MEV distribution to new LPs
+            afterAddLiquidity: true,
             afterRemoveLiquidity: false,
-            beforeSwap: true, // Order encryption and matching
-            afterSwap: true, // MEV capture and redistribution
+            beforeSwap: true,
+            afterSwap: true,
             beforeDonate: false,
             afterDonate: false,
-            beforeSwapReturnDelta: false,
+            beforeSwapReturnDelta: true,
             afterSwapReturnDelta: false,
             afterAddLiquidityReturnDelta: false,
             afterRemoveLiquidityReturnDelta: false
@@ -133,12 +133,11 @@ contract MockShadowSwapHook is BaseHook {
     function _afterAddLiquidity(
         address sender,
         PoolKey calldata key,
-        SwapParams calldata params,
+        ModifyLiquidityParams calldata params,
         BalanceDelta delta,
+        BalanceDelta,
         bytes calldata hookData
-    ) internal returns (bytes4, BalanceDelta) {
-        // Distribute accumulated MEV to new LP position
-        // Implementation will be added in next steps
+    ) internal override returns (bytes4, BalanceDelta) {
         return (this.afterAddLiquidity.selector, BalanceDeltaLibrary.ZERO_DELTA);
     }
 }
