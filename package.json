@@ -1,22 +1,43 @@
 {
   "name": "shadowswap",
   "version": "1.0.0",
-  "description": "> **Privacy-Preserving DEX with MEV Protection and Encrypted Order Matching**",
+  "description": "Privacy-Preserving DEX with MEV Protection and Encrypted Order Matching - Uniswap v4 Hook + Fhenix FHE",
   "main": "index.js",
   "directories": {
     "lib": "lib",
     "test": "test"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "forge test",
+    "test:verbose": "forge test -vvv",
+    "test:gas": "forge test --gas-report",
+    "build": "forge build",
+    "clean": "forge clean",
+    "deploy:local": "forge script script/Deploy.s.sol:DeployShadowSwap --sig 'deployLocal()' --broadcast",
+    "deploy:sepolia": "forge script script/Deploy.s.sol:DeployShadowSwap --sig 'deploySepolia()' --rpc-url $SEPOLIA_RPC_URL --broadcast",
+    "deploy:arb-sepolia": "forge script script/Deploy.s.sol:DeployShadowSwap --sig 'deployArbitrumSepolia()' --rpc-url $ARBITRUM_SEPOLIA_RPC_URL --broadcast",
+    "hardhat:test": "npx hardhat test",
+    "hardhat:compile": "npx hardhat compile"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/AJTECH001/ShadowSwap.git"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "keywords": [
+    "defi",
+    "dex",
+    "uniswap",
+    "v4",
+    "hooks",
+    "mev",
+    "fhe",
+    "fhenix",
+    "privacy",
+    "ethereum",
+    "solidity"
+  ],
+  "author": "Alade Jamiu Damilola",
+  "license": "MIT",
   "type": "commonjs",
   "bugs": {
     "url": "https://github.com/AJTECH001/ShadowSwap/issues"

@@ -86,6 +86,10 @@ contract DeployShadowSwap is Script {
 
     /**
      * @notice Complete deployment process
+     * @dev Uses a two-phase deployment:
+     *      1. First, mine the hook address and calculate where it will be deployed
+     *      2. Deploy ServiceManager with the predicted hook address
+     *      3. Deploy Hook with CREATE2 to the predicted address
      */
     function _deployComplete() internal {
         vm.startBroadcast(config.deployerKey);
@@ -102,12 +106,8 @@ contract DeployShadowSwap is Script {
         }
         console.log("PoolManager:", config.poolManager);
 
-        // Step 1.5: Deploy ServiceManager (Mock AVS Dir for now)
-        console.log("Deploying ShadowSwap ServiceManager...");
-        serviceManager = new ShadowSwapServiceManager(address(0), address(0x123)); // Placeholder hook addr 0
-        console.log("ServiceManager:", address(serviceManager));
-
         // Step 2: Calculate hook deployment address with required flags using HookMiner
+        // We need to predict the hook address BEFORE deploying ServiceManager
         console.log("Mining hook address with required permissions...");
 
         uint160 flags = uint160(
@@ -116,19 +116,42 @@ contract DeployShadowSwap is Script {
         );
 
         // Create2 deployer proxy address (used in forge script)
-        address deployer = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
+        address create2Deployer = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
+        
+        // Placeholder ServiceManager address for initial mining
+        // We'll use a deterministic address calculation
+        address predictedServiceManager = address(uint160(uint256(keccak256(
+            abi.encodePacked(
+                bytes1(0xd6), bytes1(0x94),
+                vm.addr(config.deployerKey),
+                bytes1(0x01) // nonce for first deployment
+            )
+        ))));
 
         (address hookAddress, bytes32 salt) = HookMiner.find(
-            deployer,
+            create2Deployer,
             flags,
             type(ShadowSwapHook).creationCode,
-            abi.encode(IPoolManager(config.poolManager), address(serviceManager))
+            abi.encode(IPoolManager(config.poolManager), predictedServiceManager)
         );
 
         console.log("Found valid hook address:", hookAddress);
         console.log("Using salt:", uint256(salt));
 
-        // Step 3: Deploy hook using CREATE2 with the mined salt
+        // Step 3: Deploy ServiceManager with the predicted hook address
+        console.log("Deploying ShadowSwap ServiceManager...");
+        // Note: In production, replace address(0x123) with actual AVS Directory
+        serviceManager = new ShadowSwapServiceManager(hookAddress, address(0x123));
+        console.log("ServiceManager:", address(serviceManager));
+
+        // Verify ServiceManager was deployed to predicted address
+        require(
+            address(serviceManager) == predictedServiceManager || 
+            predictedServiceManager == address(0), // Allow if prediction wasn't used
+            "ServiceManager deployed to unexpected address - hook address will be invalid"
+        );
+
+        // Step 4: Deploy hook using CREATE2 with the mined salt
         console.log("Deploying ShadowSwap Hook...");
 
         hook = new ShadowSwapHook{salt: salt}(IPoolManager(config.poolManager), address(serviceManager));
@@ -137,10 +160,10 @@ contract DeployShadowSwap is Script {
 
         console.log("ShadowSwap Hook deployed to:", address(hook));
 
-        // Step 4: Verify deployment
+        // Step 5: Verify deployment
         _verifyDeployment();
 
-        // Step 5: Output deployment summary
+        // Step 6: Output deployment summary
         _outputDeploymentSummary();
 
         vm.stopBroadcast();

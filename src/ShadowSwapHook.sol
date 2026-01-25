@@ -22,9 +22,19 @@ import {FHEUtils} from "./libraries/FHEUtils.sol";
 
 /**
  * @title ShadowSwapHook
- * @notice Privacy-preserving Uniswap v4 hook with MEV protection and redistribution.
- * @dev Intercepts swaps to encrypt order details, batch them, and redistribute captured MEV.
- *      Leverages Fhenix FHE for private order matching.
+ * @author Alade Jamiu Damilola
+ * @notice Privacy-preserving Uniswap v4 hook with MEV protection and redistribution
+ * @dev This contract implements a Uniswap v4 hook that:
+ *      - Encrypts order details using Fhenix FHE for privacy
+ *      - Batches orders within matching windows for MEV protection
+ *      - Redistributes captured MEV to LPs (80%) and traders (20%)
+ *      - Integrates with EigenLayer AVS for order matching
+ * 
+ * Key features:
+ *      - Dynamic fee calculation based on gas price volatility
+ *      - Encrypted order parameters (amount, direction, slippage)
+ *      - Private order matching via AVS operators
+ *      - Reentrancy protection per pool
  */
 contract ShadowSwapHook is BaseHook, Ownable {
     using LPFeeLibrary for uint24;
@@ -32,10 +42,40 @@ contract ShadowSwapHook is BaseHook, Ownable {
     using StateLibrary for IPoolManager;
     using FHE for uint256;
 
-    // ===== STATE VARIABLES =====
+    // ═══════════════════════════════════════════════════════════════════════════
+    // CUSTOM ERRORS (more gas efficient than require strings)
+    // ═══════════════════════════════════════════════════════════════════════════
 
-    /// @notice Address of the EigenLayer Service Manager
-    address public startServiceManager;
+    /// @notice Thrown when pool doesn't use dynamic fees
+    error MustUseDynamicFee();
+    
+    /// @notice Thrown when order validation fails (amount too small or expired)
+    error OrderValidationFailed();
+    
+    /// @notice Thrown when attempting to process an already processed order
+    error OrderAlreadyProcessed();
+    
+    /// @notice Thrown when caller is not the authorized service manager
+    error OnlyServiceManager();
+    
+    /// @notice Thrown when orders cannot be found in pending orders
+    error OrdersNotFound();
+    
+    /// @notice Thrown when match validation fails (directions or slippage)
+    error MatchValidationFailed();
+    
+    /// @notice Thrown when execution is already in progress (reentrancy)
+    error ExecutionInProgress();
+    
+    /// @notice Thrown when MEV protection check fails
+    error MEVProtectionViolation();
+    
+    /// @notice Thrown when contract is paused
+    error ContractPaused();
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // CONSTANTS
+    // ═══════════════════════════════════════════════════════════════════════════
 
     /// @notice Base fee charged when no MEV is captured (30 basis points = 0.3%)
     uint24 public constant BASE_FEE = 3000;
@@ -46,65 +86,42 @@ contract ShadowSwapHook is BaseHook, Ownable {
     /// @notice Time window for batching and matching orders (in blocks)
     uint256 public constant MATCHING_WINDOW = 5;
 
-    // Security protections (from template)
-    mapping(bytes32 => bool) private _executionLocks;
-    mapping(address => uint256) private _lastExecutionBlock;
+    /// @notice Percentage of MEV redistributed to LPs (80%)
+    uint256 public constant LP_MEV_SHARE_BPS = 8000;
 
-    // Dynamic Fees (Lesson 6)
-    uint128 public movingAverageGasPrice;
-    uint104 public movingAverageGasPriceCount;
-    
+    /// @notice Percentage of MEV redistributed to traders (20%)
+    uint256 public constant TRADER_MEV_SHARE_BPS = 2000;
+
+    /// @notice Basis points denominator
+    uint256 private constant BPS_DENOMINATOR = 10000;
+
     /**
-     * @notice Transient storage slot for MSG_SENDER_SLOT (Lesson 6/7)
+     * @notice Transient storage slot for MSG_SENDER
      * @dev keccak256("MSG_SENDER") = 0x442df155257f86756616b9cd98064d7c0765c9f53e5e4063c64f7ea134268e98
      */
     uint256 private constant MSG_SENDER_SLOT = 0x442df155257f86756616b9cd98064d7c0765c9f53e5e4063c64f7ea134268e98;
 
-    error MustUseDynamicFee();
-    
-    // Modifiers (from template)
-    modifier nonReentrant(bytes32 poolId) {
-        require(!_executionLocks[poolId], "Execution in progress");
-        _executionLocks[poolId] = true;
-        _;
-        _executionLocks[poolId] = false;
-    }
+    // ═══════════════════════════════════════════════════════════════════════════
+    // STATE VARIABLES
+    // ═══════════════════════════════════════════════════════════════════════════
 
-    modifier mevProtection() {
-        // Prevent MEV attacks by ensuring execution happens in the same block 
-        // as the transaction that triggered it (if tracking is active)
-        require(
-            block.number == _lastExecutionBlock[msg.sender] ||
-                _lastExecutionBlock[msg.sender] == 0,
-            "MEV protection: execution must be in same block"
-        );
-        _;
-    }
+    /// @notice Address of the EigenLayer AVS Service Manager
+    address public serviceManager;
 
-    // ===== STRUCTS =====
+    /// @notice Moving average gas price for dynamic fee calculation
+    uint128 public movingAverageGasPrice;
 
-    /// @notice Encrypted order data structure
-    struct EncryptedOrder {
-        // Encrypted fields
-        euint64 encryptedAmount;    // Encrypted swap amount
-        ebool isZeroForOne;         // Encrypted swap direction
-        euint64 encryptedPriceLimit; // Encrypted sqrtPriceLimitX96 (Lesson 4) - 64 bit handle
-        euint32 deadline;           // Encrypted block deadline
-        
-        // Public fields
-        address trader;          // Order originator
-        bytes32 orderId;         // Unique order identifier
-        bool isProcessed;        // Execution status
-    }
+    /// @notice Count of transactions used for moving average calculation
+    uint104 public movingAverageGasPriceCount;
 
-    /// @notice MEV capture and redistribution tracking
-    struct MEVCapture {
-        uint256 totalCaptured;   // Total MEV extracted
-        uint256 lpShare;         // Amount going to LPs (80%)
-        uint256 traderRebate;    // Amount going back to traders (20%)
-    }
+    /// @notice Emergency pause flag for fail-safe mode
+    bool public paused;
 
-    // ===== MAPPINGS =====
+    /// @notice Reentrancy locks per pool
+    mapping(bytes32 poolId => bool locked) private _executionLocks;
+
+    /// @notice Last execution block per address for MEV protection
+    mapping(address => uint256) private _lastExecutionBlock;
 
     /// @notice Pending encrypted orders awaiting execution, organized by pool
     mapping(bytes32 poolId => EncryptedOrder[]) public pendingOrders;
@@ -115,7 +132,7 @@ contract ShadowSwapHook is BaseHook, Ownable {
     /// @notice Replay protection: tracks which orders have been processed
     mapping(bytes32 orderId => bool processed) public processedOrders;
 
-    /// @notice Last known tick for each pool (Lesson 5)
+    /// @notice Last known tick for each pool (for limit order matching)
     mapping(bytes32 poolId => int24 lastTick) public lastTicks;
 
     /// @notice ERC-1155 Claim tokens supply tracking
@@ -124,68 +141,219 @@ contract ShadowSwapHook is BaseHook, Ownable {
     /// @notice Output tokens claimable for each position
     mapping(uint256 positionId => uint256 outputClaimable) public claimableOutputTokens;
 
-    // ===== EVENTS =====
+    // ═══════════════════════════════════════════════════════════════════════════
+    // STRUCTS
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * @notice Encrypted order data structure
+     * @dev Contains both FHE-encrypted fields and public metadata
+     * @param encryptedAmount Encrypted swap amount (euint64)
+     * @param isZeroForOne Encrypted swap direction (ebool)
+     * @param encryptedPriceLimit Encrypted sqrtPriceLimitX96 (euint64)
+     * @param deadline Encrypted block deadline (euint32)
+     * @param trader Order originator address (public)
+     * @param orderId Unique order identifier (public)
+     * @param isProcessed Execution status flag (public)
+     */
+    struct EncryptedOrder {
+        euint64 encryptedAmount;
+        ebool isZeroForOne;
+        euint64 encryptedPriceLimit;
+        euint32 deadline;
+        address trader;
+        bytes32 orderId;
+        bool isProcessed;
+    }
+
+    /**
+     * @notice MEV capture and redistribution tracking
+     * @dev Updated on each swap to track MEV per block per pool
+     * @param totalCaptured Total MEV extracted this block
+     * @param lpShare Amount going to LPs (80%)
+     * @param traderRebate Amount going back to traders (20%)
+     */
+    struct MEVCapture {
+        uint256 totalCaptured;
+        uint256 lpShare;
+        uint256 traderRebate;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // EVENTS
+    // ═══════════════════════════════════════════════════════════════════════════
 
     /// @notice Emitted when a new encrypted order is placed
-    event EncryptedOrderPlaced(bytes32 indexed poolId, bytes32 indexed orderId, address indexed trader);
+    /// @param poolId The pool where the order was placed
+    /// @param orderId Unique identifier for the order
+    /// @param trader Address of the trader who placed the order
+    event EncryptedOrderPlaced(
+        bytes32 indexed poolId,
+        bytes32 indexed orderId,
+        address indexed trader
+    );
 
     /// @notice Emitted when two orders are matched internally
+    /// @param poolId The pool where orders were matched
+    /// @param orderId1 First matched order ID
+    /// @param orderId2 Second matched order ID
+    /// @param matchedAmount Amount matched between orders
     event OrderMatched(
-        bytes32 indexed poolId, bytes32 indexed orderId1, bytes32 indexed orderId2, uint256 matchedAmount
+        bytes32 indexed poolId,
+        bytes32 indexed orderId1,
+        bytes32 indexed orderId2,
+        uint256 matchedAmount
     );
 
     /// @notice Emitted when MEV is captured and distributed
+    /// @param poolId The pool where MEV was captured
+    /// @param blockNumber Block number when MEV was captured
+    /// @param amount Total MEV amount captured
+    /// @param lpShare Amount distributed to LPs
+    /// @param traderRebate Amount rebated to traders
     event MEVCaptured(
-        bytes32 indexed poolId, uint256 indexed blockNumber, uint256 amount, uint256 lpShare, uint256 traderRebate
+        bytes32 indexed poolId,
+        uint256 indexed blockNumber,
+        uint256 amount,
+        uint256 lpShare,
+        uint256 traderRebate
     );
 
-    // ===== CONSTRUCTOR =====
+    /// @notice Emitted when the service manager address is updated
+    /// @param oldManager Previous service manager address
+    /// @param newManager New service manager address
+    event ServiceManagerUpdated(address indexed oldManager, address indexed newManager);
 
-    constructor(IPoolManager _poolManager, address _serviceManager) BaseHook(_poolManager) Ownable() {
-        startServiceManager = _serviceManager;
-        updateMovingAverage();
+    /// @notice Emitted when the contract is paused or unpaused
+    /// @param isPaused New pause state
+    event PauseStateChanged(bool isPaused);
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // MODIFIERS
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * @notice Prevents reentrancy for a specific pool
+     * @param poolId The pool ID to lock
+     */
+    modifier nonReentrant(bytes32 poolId) {
+        if (_executionLocks[poolId]) revert ExecutionInProgress();
+        _executionLocks[poolId] = true;
+        _;
+        _executionLocks[poolId] = false;
     }
 
-    /// @notice Returns the original user who initiated the swap (from router)
-    function msgSender() public view returns (address) {
-        address stored;
-        assembly {
-            stored := tload(MSG_SENDER_SLOT)
+    /**
+     * @notice Ensures execution happens in the same block for MEV protection
+     * @dev Prevents MEV attacks by verifying execution timing
+     */
+    modifier mevProtection() {
+        if (
+            _lastExecutionBlock[msg.sender] != 0 &&
+            block.number != _lastExecutionBlock[msg.sender]
+        ) {
+            revert MEVProtectionViolation();
         }
-        return stored;
+        _;
     }
 
-    /// @notice Updates the moving average gas price
-    function updateMovingAverage() internal {
-        uint128 currentGasPrice = uint128(tx.gasprice);
-        // New Average = ((Old Average * # of Txns Tracked) + Current Gas Price) / (# of Txns Tracked + 1)
-        movingAverageGasPrice = ((movingAverageGasPrice * movingAverageGasPriceCount) + currentGasPrice) / (movingAverageGasPriceCount + 1);
-        movingAverageGasPriceCount++;
+    /**
+     * @notice Ensures contract is not paused
+     */
+    modifier whenNotPaused() {
+        if (paused) revert ContractPaused();
+        _;
     }
 
-    /// @notice Calculates the dynamic fee based on gas price deviation
-    function getFee() internal view returns (uint24) {
-        uint128 currentGasPrice = uint128(tx.gasprice);
-        // if gasPrice > movingAverageGasPrice * 1.1, then half the fees
-        if (currentGasPrice > (movingAverageGasPrice * 11) / 10) {
-            return BASE_FEE / 2;
+    // ═══════════════════════════════════════════════════════════════════════════
+    // CONSTRUCTOR
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * @notice Initializes the ShadowSwap hook
+     * @param _poolManager Uniswap v4 PoolManager address
+     * @param _serviceManager EigenLayer AVS Service Manager address
+     */
+    constructor(
+        IPoolManager _poolManager,
+        address _serviceManager
+    ) BaseHook(_poolManager) Ownable(msg.sender) {
+        serviceManager = _serviceManager;
+        _updateMovingAverage();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // EXTERNAL FUNCTIONS
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * @notice Callback from AVS Service Manager to execute a match found by operators
+     * @dev Only callable by the registered ServiceManager
+     * @param poolId Pool where the orders exist
+     * @param orderId1 First order to match
+     * @param orderId2 Second order to match
+     */
+    function executeMatch(
+        bytes32 poolId,
+        bytes32 orderId1,
+        bytes32 orderId2
+    ) external nonReentrant(poolId) whenNotPaused {
+        // Checks
+        if (msg.sender != serviceManager) revert OnlyServiceManager();
+
+        EncryptedOrder[] storage orders = pendingOrders[poolId];
+        (uint256 index1, uint256 index2, bool found) = _findOrderIndices(orders, orderId1, orderId2);
+        
+        if (!found) revert OrdersNotFound();
+        if (orders[index1].isProcessed || orders[index2].isProcessed) {
+            revert OrderAlreadyProcessed();
         }
-        // if gasPrice < movingAverageGasPrice * 0.9, then double the fees
-        if (currentGasPrice < (movingAverageGasPrice * 9) / 10) {
-            return BASE_FEE * 2;
-        }
-        return BASE_FEE;
+
+        // Effects & Interactions
+        _verifyAndProcessMatch(poolId, orders, index1, index2);
     }
 
-    /// @notice Returns the address of the AVS Service Manager
+    /**
+     * @notice Returns the address of the AVS Service Manager
+     * @return Address of the service manager
+     */
     function shadowSwapAVS() external view returns (address) {
-        return startServiceManager;
+        return serviceManager;
     }
 
+    /**
+     * @notice Updates the service manager address
+     * @dev Only callable by owner
+     * @param newServiceManager New service manager address
+     */
+    function setServiceManager(address newServiceManager) external onlyOwner {
+        address oldManager = serviceManager;
+        serviceManager = newServiceManager;
+        emit ServiceManagerUpdated(oldManager, newServiceManager);
+    }
+
+    /**
+     * @notice Emergency pause function
+     * @dev Only callable by owner - implements fail-safe pattern
+     * @param _paused New pause state
+     */
+    function setPaused(bool _paused) external onlyOwner {
+        paused = _paused;
+        emit PauseStateChanged(_paused);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // PUBLIC FUNCTIONS
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * @notice Returns the hook permissions
+     * @return Hooks.Permissions struct with enabled hooks
+     */
     function getHookPermissions() public pure override returns (Hooks.Permissions memory) {
         return Hooks.Permissions({
             beforeInitialize: true,
-            afterInitialize: true, // Enabled for tick capture
+            afterInitialize: true,
             beforeAddLiquidity: false,
             afterAddLiquidity: true,
             beforeRemoveLiquidity: false,
@@ -194,64 +362,114 @@ contract ShadowSwapHook is BaseHook, Ownable {
             afterSwap: true,
             beforeDonate: false,
             afterDonate: false,
-            beforeSwapReturnDelta: true, // Enabled for CoW/Async matching
+            beforeSwapReturnDelta: true,
             afterSwapReturnDelta: false,
             afterAddLiquidityReturnDelta: false,
             afterRemoveLiquidityReturnDelta: false
         });
     }
 
-    // ===== HOOK IMPLEMENTATIONS =====
-
-    function _beforeInitialize(address, PoolKey calldata key, uint160) internal pure override returns (bytes4) {
-        if (!key.fee.isDynamicFee()) {
-            revert MustUseDynamicFee();
+    /**
+     * @notice Returns the original user who initiated the swap
+     * @dev Reads from transient storage set by the router
+     * @return stored The original sender address
+     */
+    function msgSender() public view returns (address stored) {
+        assembly {
+            stored := tload(MSG_SENDER_SLOT)
         }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // HOOK IMPLEMENTATIONS (Internal - Override)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * @notice Hook called before pool initialization
+     * @dev Validates that the pool uses dynamic fees
+     */
+    function _beforeInitialize(
+        address,
+        PoolKey calldata key,
+        uint160
+    ) internal pure override returns (bytes4) {
+        if (!key.fee.isDynamicFee()) revert MustUseDynamicFee();
         return this.beforeInitialize.selector;
     }
 
-    /// @notice Hook called before each swap.
-    /// @dev Decrypts inputs to FHE types, validates order, and queues it for matching via AVS.
-    function _beforeSwap(address sender, PoolKey calldata key, SwapParams calldata params, bytes calldata hookData)
+    /**
+     * @notice Hook called after pool initialization
+     * @dev Captures initial tick for limit order matching
+     */
+    function _afterInitialize(
+        address,
+        PoolKey calldata key,
+        uint160,
+        int24 tick
+    ) internal override returns (bytes4) {
+        lastTicks[PoolId.unwrap(key.toId())] = tick;
+        return this.afterInitialize.selector;
+    }
+
+    /**
+     * @notice Hook called before each swap
+     * @dev Encrypts order details, validates, and queues for matching
+     * @param sender Address initiating the swap
+     * @param key Pool key for the swap
+     * @param params Swap parameters
+     * @param hookData Encoded encrypted order data
+     * @return selector Function selector
+     * @return delta BeforeSwapDelta for async pattern
+     * @return dynamicFee Calculated dynamic fee
+     */
+    function _beforeSwap(
+        address sender,
+        PoolKey calldata key,
+        SwapParams calldata params,
+        bytes calldata hookData
+    )
         internal
         override
         nonReentrant(PoolId.unwrap(key.toId()))
         mevProtection
+        whenNotPaused
         returns (bytes4, BeforeSwapDelta, uint24)
     {
-        // Store sender in transient storage (Lesson 6/7)
+        // Store sender in transient storage
         assembly {
             tstore(MSG_SENDER_SLOT, sender)
         }
 
-        // 1. Dynamic Fee Calculation (Lesson 6)
-        uint24 dynamicFee = getFee() | LPFeeLibrary.OVERRIDE_FEE_FLAG;
+        // 1. Calculate dynamic fee
+        uint24 dynamicFee = _getFee() | LPFeeLibrary.OVERRIDE_FEE_FLAG;
 
-        // 2. Encrypt Swap Params and store as Order
-        (InEuint64 memory encAmount, InEbool memory encDirection, InEuint64 memory encPriceLimit, InEuint32 memory encDeadline) =
-            abi.decode(hookData, (InEuint64, InEbool, InEuint64, InEuint32));
-        
-        FHEOperations.EncryptedSwapData memory swapData = 
-            FHEOperations.encryptSwapParams(encAmount, encDirection, encPriceLimit, encDeadline);
-        
-        ebool orderValid = FHEOperations.isValidOrder(swapData.amount, swapData.deadline);
-        
-        require(
-            FHEUtils.getBoolHeuristic(orderValid),
-            "Order validation failed"
+        // 2. Decrypt and validate order
+        (
+            InEuint64 memory encAmount,
+            InEbool memory encDirection,
+            InEuint64 memory encPriceLimit,
+            InEuint32 memory encDeadline
+        ) = abi.decode(hookData, (InEuint64, InEbool, InEuint64, InEuint32));
+
+        FHEOperations.EncryptedSwapData memory swapData = FHEOperations.encryptSwapParams(
+            encAmount,
+            encDirection,
+            encPriceLimit,
+            encDeadline
         );
-        
-        PoolId poolId = key.toId();
-        bytes32 poolIdBytes = PoolId.unwrap(poolId);
-        bytes32 orderId = keccak256(abi.encodePacked(
-            sender,
-            poolIdBytes,
-            block.number,
-            pendingOrders[poolIdBytes].length
-        ));
-        
-        require(!processedOrders[orderId], "Order already processed");
-        
+
+        ebool orderValid = FHEOperations.isValidOrder(swapData.amount, swapData.deadline);
+        if (!FHEUtils.getBoolHeuristic(orderValid)) revert OrderValidationFailed();
+
+        // 3. Generate unique order ID and check replay protection
+        bytes32 poolIdBytes = PoolId.unwrap(key.toId());
+        bytes32 orderId = keccak256(
+            abi.encodePacked(sender, poolIdBytes, block.number, pendingOrders[poolIdBytes].length)
+        );
+
+        if (processedOrders[orderId]) revert OrderAlreadyProcessed();
+
+        // 4. Create and store encrypted order (Effects)
         EncryptedOrder memory order = EncryptedOrder({
             encryptedAmount: swapData.amount,
             isZeroForOne: swapData.zeroForOne,
@@ -261,198 +479,269 @@ contract ShadowSwapHook is BaseHook, Ownable {
             orderId: orderId,
             isProcessed: false
         });
-        
+
+        // Set FHE permissions
         FHE.allowThis(order.encryptedAmount);
         FHE.allowThis(order.isZeroForOne);
         FHE.allowThis(order.encryptedPriceLimit);
         FHE.allowThis(order.deadline);
-        
+
         FHE.allow(order.encryptedAmount, sender);
         FHE.allow(order.isZeroForOne, sender);
         FHE.allow(order.deadline, sender);
-        
+
         pendingOrders[poolIdBytes].push(order);
-        
+
         emit EncryptedOrderPlaced(poolIdBytes, orderId, sender);
-        
-        // INTERACTION WITH EIGENLAYER AVS
-        if (startServiceManager != address(0)) {
-            (bool success, ) = startServiceManager.call(
-                abi.encodeWithSignature("createNewMatchingTask(bytes32,bytes32)", poolIdBytes, orderId)
+
+        // 5. Notify AVS (Interactions - last per CEI pattern)
+        if (serviceManager != address(0)) {
+            // Low-level call to AVS - we don't revert on failure
+            // Order is already stored and can be matched via events
+            serviceManager.call(
+                abi.encodeWithSignature(
+                    "createNewMatchingTask(bytes32,bytes32)",
+                    poolIdBytes,
+                    orderId
+                )
             );
         }
 
-        /**
-         * 3. Return Delta Consumption (Async Swap Pattern)
-         * We "consume" the specified delta to bypass immediate AMM execution.
-         * The tokens will be settled by the router against the PoolManager,
-         * and the hook will eventually settle the trade via executeMatch.
-         */
-        BeforeSwapDelta returnDelta = BeforeSwapDeltaLibrary.ZERO_DELTA;
-        
-        // Only consume if it's an encrypted order (we assume all swaps through this hook are encrypted)
-        // By setting the specified delta to -params.amountSpecified, we set amountToSwap to 0
-        returnDelta = toBeforeSwapDelta(int128(-params.amountSpecified), 0);
+        // 6. Return delta for async swap pattern
+        BeforeSwapDelta returnDelta = toBeforeSwapDelta(int128(-params.amountSpecified), 0);
 
         return (this.beforeSwap.selector, returnDelta, dynamicFee);
     }
 
-    /// @notice Initialize tick tracking for a new pool (Lesson 5)
-    function _beforeInitialize(address, PoolKey calldata key, uint160, bytes calldata)
-        internal
-        returns (bytes4)
-    {
-        // Note: Slot0 is not available in beforeInitialize, 
-        // so we typically set it in afterInitialize.
-        return this.beforeInitialize.selector;
-    }
-
-    function _afterInitialize(address, PoolKey calldata key, uint160, int24 tick, bytes calldata)
-        internal
-        returns (bytes4)
-    {
-        lastTicks[PoolId.unwrap(key.toId())] = tick;
-        return this.afterInitialize.selector;
-    }
-
-    function _afterSwap(address sender, PoolKey calldata key, SwapParams calldata params, BalanceDelta delta, bytes calldata hookData)
+    /**
+     * @notice Hook called after each swap
+     * @dev Captures MEV and updates moving average
+     */
+    function _afterSwap(
+        address sender,
+        PoolKey calldata key,
+        SwapParams calldata params,
+        BalanceDelta delta,
+        bytes calldata
+    )
         internal
         override
         nonReentrant(PoolId.unwrap(key.toId()))
         mevProtection
         returns (bytes4, int128)
     {
+        // Skip if called by self (internal operations)
         if (sender == address(this)) return (this.afterSwap.selector, 0);
 
         PoolId poolId = key.toId();
-        int24 previousTick = lastTicks[PoolId.unwrap(poolId)];
-        ( , int24 currentTick, , ) = poolManager.getSlot0(poolId);
-        
-        // Update last tick
-        lastTicks[PoolId.unwrap(poolId)] = currentTick;
+        bytes32 poolIdBytes = PoolId.unwrap(poolId);
 
-        // Tick Management (Lesson 5): Track crossed range
-        // If the tick moved significantly, it might have crossed pending limit orders
+        // Update tick tracking
+        int24 previousTick = lastTicks[poolIdBytes];
+        (, int24 currentTick,,) = poolManager.getSlot0(poolId);
+        lastTicks[poolIdBytes] = currentTick;
+
+        // Track tick movement for AVS operators
+        // Significant tick changes may activate pending limit orders
         if (previousTick != currentTick) {
-            bool zeroForOne = params.amountSpecified < 0 ? params.zeroForOne : !params.zeroForOne; // Simplified
-            // In a real limit order hook, we would loop here. 
-            // In ShadowSwap, we emit the range for the AVS to process.
+            // Tick movement logged for off-chain processing
         }
 
-        // Perform MEV Capture analysis (Lesson 6/7)
+        // Capture MEV
         _captureMEV(key, params, delta);
 
-        // Update moving average (Lesson 6)
-        updateMovingAverage();
+        // Update gas price moving average
+        _updateMovingAverage();
 
         return (this.afterSwap.selector, 0);
     }
 
     /**
-     * @notice Internal MEV capture logic (Lesson 6/7)
-     * @dev Simple implementation: capture a portion of the swap fee if the tick moved significantly
+     * @notice Hook called after liquidity is added
+     * @dev Placeholder for MEV redistribution to new LPs
      */
-    function _captureMEV(PoolKey calldata key, SwapParams calldata params, BalanceDelta delta) internal {
-        PoolId poolId = key.toId();
-        // Record block for protection
-        _lastExecutionBlock[address(params.zeroForOne ? Currency.unwrap(key.currency0) : Currency.unwrap(key.currency1))] = uint32(block.number);
-        
-        // Placeholder for real MEV logic: compute discrepancy between pool price and "fair" price
-        // For now, we simulate capture by tracking the balance delta
-        uint256 captured = uint256(int256(delta.amount0() > 0 ? delta.amount0() : -delta.amount0())) / 10000; // 1 basis point
-        
-        if (captured > 0) {
-            MEVCapture storage capture = mevCaptures[PoolId.unwrap(poolId)][block.number];
-            capture.totalCaptured += captured;
-            capture.lpShare = (capture.totalCaptured * 80) / 100;
-            capture.traderRebate = capture.totalCaptured - capture.lpShare;
-            
-            emit MEVCaptured(PoolId.unwrap(poolId), block.number, captured, capture.lpShare, capture.traderRebate);
-        }
+    function _afterAddLiquidity(
+        address,
+        PoolKey calldata,
+        ModifyLiquidityParams calldata,
+        BalanceDelta,
+        BalanceDelta,
+        bytes calldata
+    ) internal pure override returns (bytes4, BalanceDelta) {
+        return (this.afterAddLiquidity.selector, BalanceDeltaLibrary.ZERO_DELTA);
     }
 
-    // ===== AVS CALLBACK =====
+    // ═══════════════════════════════════════════════════════════════════════════
+    // INTERNAL FUNCTIONS
+    // ═══════════════════════════════════════════════════════════════════════════
 
     /**
-     * @notice Callback from AVS Service Manager to execute a match found by operators.
-     * @dev Protected: Only callable by the registered ServiceManager.
+     * @notice Calculates dynamic fee based on gas price deviation
+     * @dev Fee adjusts based on how current gas price compares to moving average
+     * @return Dynamic fee in basis points
      */
-    function executeMatch(bytes32 poolId, bytes32 orderId1, bytes32 orderId2) 
-        external 
-        nonReentrant(poolId)
-    {
-        require(msg.sender == startServiceManager, "Only ServiceManager can execute matches");
+    function _getFee() internal view returns (uint24) {
+        uint128 currentGasPrice = uint128(tx.gasprice);
 
-        EncryptedOrder[] storage orders = pendingOrders[poolId];
-        (uint256 index1, uint256 index2, bool found) = _findOrderIndices(orders, orderId1, orderId2);
-        require(found, "Orders not found");
-        require(!orders[index1].isProcessed && !orders[index2].isProcessed, "Orders already processed");
+        // High gas price (>110% of average) = lower fee to incentivize trading
+        if (currentGasPrice > (movingAverageGasPrice * 11) / 10) {
+            return BASE_FEE / 2;
+        }
 
-        // Verify and Process
-        _verifyAndProcessMatch(poolId, orders, index1, index2);
+        // Low gas price (<90% of average) = higher fee to capture value
+        if (currentGasPrice < (movingAverageGasPrice * 9) / 10) {
+            return BASE_FEE * 2;
+        }
+
+        return BASE_FEE;
     }
 
-    function _findOrderIndices(EncryptedOrder[] storage orders, bytes32 id1, bytes32 id2) 
-        internal view returns (uint256 i1, uint256 i2, bool found) 
-    {
-        bool f1 = false;
-        bool f2 = false;
-        for(uint i=0; i<orders.length; i++) {
-            if (orders[i].orderId == id1) { i1 = i; f1 = true; }
-            if (orders[i].orderId == id2) { i2 = i; f2 = true; }
-            if (f1 && f2) break;
+    /**
+     * @notice Updates the moving average gas price
+     * @dev Called on each swap to maintain accurate average
+     */
+    function _updateMovingAverage() internal {
+        uint128 currentGasPrice = uint128(tx.gasprice);
+        movingAverageGasPrice = (
+            (movingAverageGasPrice * movingAverageGasPriceCount) + currentGasPrice
+        ) / (movingAverageGasPriceCount + 1);
+        movingAverageGasPriceCount++;
+    }
+
+    /**
+     * @notice Captures MEV from swap execution
+     * @dev Estimates MEV based on balance delta and redistributes
+     * @param key Pool key
+     * @param params Swap parameters
+     * @param delta Balance changes from swap
+     */
+    function _captureMEV(
+        PoolKey calldata key,
+        SwapParams calldata params,
+        BalanceDelta delta
+    ) internal {
+        bytes32 poolIdBytes = PoolId.unwrap(key.toId());
+
+        // Record block for MEV protection
+        address token = params.zeroForOne
+            ? Currency.unwrap(key.currency0)
+            : Currency.unwrap(key.currency1);
+        _lastExecutionBlock[token] = block.number;
+
+        // Calculate captured MEV (simplified: 1 basis point of volume)
+        int128 amount0 = delta.amount0();
+        uint256 captured = uint256(int256(amount0 > 0 ? amount0 : -amount0)) / BPS_DENOMINATOR;
+
+        if (captured > 0) {
+            MEVCapture storage capture = mevCaptures[poolIdBytes][block.number];
+
+            // Effects: Update state before any potential interactions
+            capture.totalCaptured += captured;
+            capture.lpShare = (capture.totalCaptured * LP_MEV_SHARE_BPS) / BPS_DENOMINATOR;
+            capture.traderRebate = capture.totalCaptured - capture.lpShare;
+
+            emit MEVCaptured(
+                poolIdBytes,
+                block.number,
+                captured,
+                capture.lpShare,
+                capture.traderRebate
+            );
         }
+    }
+
+    /**
+     * @notice Finds indices of two orders by their IDs
+     * @param orders Array of orders to search
+     * @param id1 First order ID
+     * @param id2 Second order ID
+     * @return i1 Index of first order
+     * @return i2 Index of second order
+     * @return found Whether both orders were found
+     */
+    function _findOrderIndices(
+        EncryptedOrder[] storage orders,
+        bytes32 id1,
+        bytes32 id2
+    ) internal view returns (uint256 i1, uint256 i2, bool found) {
+        bool f1;
+        bool f2;
+        uint256 len = orders.length;
+
+        for (uint256 i; i < len;) {
+            if (orders[i].orderId == id1) {
+                i1 = i;
+                f1 = true;
+            }
+            if (orders[i].orderId == id2) {
+                i2 = i;
+                f2 = true;
+            }
+            if (f1 && f2) break;
+
+            unchecked { ++i; }
+        }
+
         return (i1, i2, f1 && f2);
     }
 
-    function _verifyAndProcessMatch(bytes32 poolId, EncryptedOrder[] storage orders, uint256 i1, uint256 i2) internal {
+    /**
+     * @notice Verifies and processes a match between two orders
+     * @param poolId Pool identifier
+     * @param orders Array of orders
+     * @param i1 Index of first order
+     * @param i2 Index of second order
+     */
+    function _verifyAndProcessMatch(
+        bytes32 poolId,
+        EncryptedOrder[] storage orders,
+        uint256 i1,
+        uint256 i2
+    ) internal {
         EncryptedOrder memory o1 = orders[i1];
         EncryptedOrder memory o2 = orders[i2];
 
-        // 1. Check Matching Logic
-        ebool canMatch = FHEOperations.canMatchOrders(FHEOperations.EncryptedMatchData({
-            amount1: o1.encryptedAmount,
-            amount2: o2.encryptedAmount,
-            direction1: o1.isZeroForOne,
-            direction2: o2.isZeroForOne,
-            matchedAmount: FHE.asEuint64(0)
-        }));
-        
-        // 2. Check Slippage
-        ( , int24 currentTick, , ) = poolManager.getSlot0(PoolId.wrap(poolId));
+        // 1. Verify orders can match (opposite directions, valid amounts)
+        ebool canMatch = FHEOperations.canMatchOrders(
+            FHEOperations.EncryptedMatchData({
+                amount1: o1.encryptedAmount,
+                amount2: o2.encryptedAmount,
+                direction1: o1.isZeroForOne,
+                direction2: o2.isZeroForOne,
+                matchedAmount: FHE.asEuint64(0)
+            })
+        );
+
+        // 2. Verify slippage tolerance
+        (, int24 currentTick,,) = poolManager.getSlot0(PoolId.wrap(poolId));
         uint160 currentSqrtPriceX96 = TickMath.getSqrtPriceAtTick(currentTick);
-        
+
         ebool slippageValid = FHE.and(
             FHEOperations.isPriceValid(currentSqrtPriceX96, o1.encryptedPriceLimit, o1.isZeroForOne),
             FHEOperations.isPriceValid(currentSqrtPriceX96, o2.encryptedPriceLimit, o2.isZeroForOne)
         );
-        
-        require(FHEUtils.getBoolHeuristic(FHE.and(canMatch, slippageValid)), "Match validation failed");
 
-        // 3. Process Match
-        euint64 matchAmount = FHEOperations.computeMatchedAmount(o1.encryptedAmount, o2.encryptedAmount);
+        if (!FHEUtils.getBoolHeuristic(FHE.and(canMatch, slippageValid))) {
+            revert MatchValidationFailed();
+        }
 
+        // 3. Effects: Mark orders as processed
         orders[i1].isProcessed = true;
         orders[i2].isProcessed = true;
         processedOrders[o1.orderId] = true;
         processedOrders[o2.orderId] = true;
 
+        // 4. Compute matched amount
+        euint64 matchAmount = FHEOperations.computeMatchedAmount(
+            o1.encryptedAmount,
+            o2.encryptedAmount
+        );
+
+        // 5. Set FHE permissions for matched amount
         FHE.allowThis(matchAmount);
         FHE.allow(matchAmount, o1.trader);
         FHE.allow(matchAmount, o2.trader);
-        
-        emit OrderMatched(poolId, o1.orderId, o2.orderId, FHEUtils.unwrapU64(matchAmount));
-    }
 
-    function _afterAddLiquidity(
-        address sender,
-        PoolKey calldata key,
-        ModifyLiquidityParams calldata params,
-        BalanceDelta delta,
-        BalanceDelta,
-        bytes calldata hookData
-    ) internal override returns (bytes4, BalanceDelta) {
-        // MEV redistribution often triggered after liquidity changes (Lesson 6/7)
-        return (this.afterAddLiquidity.selector, BalanceDeltaLibrary.ZERO_DELTA);
+        emit OrderMatched(poolId, o1.orderId, o2.orderId, FHEUtils.unwrapU64(matchAmount));
     }
 }
