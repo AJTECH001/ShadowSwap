@@ -80,17 +80,26 @@ library FHEUtils {
 
     /**
      * @notice Safe way to get a boolean result from FHE comparison
-     * @dev This uses the ciphertext handle, not actual decryption
-     *      For production, implement async handling or client-side unsealing
+     * @dev ⚠️ PRODUCTION WARNING: This is a HEURISTIC for testing ONLY!
+     *      This does NOT perform actual decryption - it only checks if a handle exists.
+     *      
+     *      For production environments:
+     *      1. Use async decryption via FHE.decrypt() and callbacks
+     *      2. Use client-side unsealing with cofhejs library
+     *      3. Implement proper FHE.getDecryptResultSafe() patterns
+     *      
+     *      This function will return true for ANY non-zero ciphertext handle,
+     *      regardless of the actual encrypted value. DO NOT rely on this for
+     *      security-critical decisions in production!
+     *      
      * @param encBool Encrypted boolean from FHE operation
-     * @return approximation A heuristic result (NOT secure decryption!)
+     * @return approximation A heuristic result based on handle existence (NOT secure!)
      */
     function getBoolHeuristic(ebool encBool) internal pure returns (bool approximation) {
-        // This is a heuristic based on handle value
-        // NOT actual decryption - for testing only!
-        // In production, use client-side unsealing with cofhejs
+        // ⚠️ TEST ONLY - NOT actual decryption!
+        // This heuristic assumes a non-zero handle means the value "exists"
+        // In production, use FHE.decrypt() with proper async handling
         uint256 handle = ebool.unwrap(encBool);
-        // Non-zero handle means value exists
         return handle != 0;
     }
 

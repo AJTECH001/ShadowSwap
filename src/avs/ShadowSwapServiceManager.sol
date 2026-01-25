@@ -88,13 +88,17 @@ contract ShadowSwapServiceManager {
      *      For this implementation, we assume a trusted operator signature verification (mock).
      * @param task The original task being responded to.
      * @param response The matching result (two order IDs).
-     * @param signature Operator's signature proving they authorized this response.
+     * @param signature Operator's signature proving they authorized this response (used in production for BLS verification).
      */
     function respondToTask(
         MatchingTask calldata task,
         TaskResponse calldata response,
-        bytes calldata signature
+        bytes calldata signature // Used for BLS signature verification in production
     ) external {
+        // Note: In production, verify BLS signature here:
+        // require(verifyBLSSignature(task, response, signature), "Invalid operator signature");
+        // For now, signature validation is mocked
+        (signature); // Silence unused parameter warning
         // 1. Verify task exists (hash check)
         require(
             keccak256(abi.encode(task)) == allTaskHashes[response.referenceTaskIndex],

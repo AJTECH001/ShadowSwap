@@ -2,6 +2,7 @@
 @uniswap/v4-core/=lib/v4-periphery/lib/v4-core/
 @uniswap/v4-periphery/=lib/v4-periphery/
 @fhenixprotocol/cofhe-contracts/=node_modules/@fhenixprotocol/cofhe-contracts/
+@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/
 cofhe-contracts/=lib/cofhe-contracts/contracts/
 ds-test/=lib/solmate/lib/ds-test/src/
 forge-gas-snapshot/=lib/v4-periphery/lib/permit2/lib/forge-gas-snapshot/src/
@@ -12,7 +13,3 @@ permit2/=lib/v4-periphery/lib/permit2/
 solmate/=lib/solmate/
 v4-core/=lib/v4-periphery/lib/v4-core/src/
 v4-periphery/=lib/v4-periphery/
-
-
-
-
