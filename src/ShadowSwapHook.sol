@@ -7,7 +7,7 @@ import {Hooks} from "@uniswap/v4-core/src/libraries/Hooks.sol";
 import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 import {PoolId, PoolIdLibrary} from "@uniswap/v4-core/src/types/PoolId.sol";
 import {BalanceDelta, BalanceDeltaLibrary} from "@uniswap/v4-core/src/types/BalanceDelta.sol";
-import {BeforeSwapDelta, BeforeSwapDeltaLibrary, toBeforeSwapDelta} from "@uniswap/v4-core/src/types/BeforeSwapDelta.sol";
+import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "@uniswap/v4-core/src/types/BeforeSwapDelta.sol";
 import {SwapParams, ModifyLiquidityParams} from "@uniswap/v4-core/src/types/PoolOperation.sol";
 import {Currency, CurrencyLibrary} from "@uniswap/v4-core/src/types/Currency.sol";
 import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
@@ -89,8 +89,16 @@ contract ShadowSwapHook is BaseHook, Ownable {
     /// @notice Percentage of MEV redistributed to LPs (80%)
     uint256 public constant LP_MEV_SHARE_BPS = 8000;
 
-    /// @notice Percentage of MEV redistributed to traders (20%)
-    uint256 public constant TRADER_MEV_SHARE_BPS = 2000;
+    /**
+     * @notice Remainder split after the trader is made whole (Trader-first policy)
+     * @dev After paying `traderCompensation`, the remaining captured value is split:
+     *      - LPs: 80%
+     *      - Protocol treasury: 20%
+     *
+     * This ensures the trader is protected first, while still rewarding LPs and funding the protocol.
+     */
+    uint256 public constant LP_REMAINDER_BPS = 8000;
+    uint256 public constant PROTOCOL_REMAINDER_BPS = 2000;
 
     /// @notice Basis points denominator
     uint256 private constant BPS_DENOMINATOR = 10000;
@@ -107,6 +115,13 @@ contract ShadowSwapHook is BaseHook, Ownable {
 
     /// @notice Address of the EigenLayer AVS Service Manager
     address public serviceManager;
+
+    /// @notice Price oracle used to estimate a trader's MEV loss versus a fair reference price
+    /// @dev Oracle must return token1PerToken0 price scaled by 1e18 for the pool.
+    address public priceOracle;
+
+    /// @notice Protocol treasury that receives the protocol share of captured value
+    address public protocolTreasury;
 
     /// @notice Moving average gas price for dynamic fee calculation
     uint128 public movingAverageGasPrice;
@@ -128,6 +143,15 @@ contract ShadowSwapHook is BaseHook, Ownable {
 
     /// @notice MEV captured and distributed, indexed by pool and block
     mapping(bytes32 poolId => mapping(uint256 blockNumber => MEVCapture)) public mevCaptures;
+
+    /// @notice Claimable rebates for traders (accounting only; settlement is out of scope for this MVP)
+    mapping(address trader => uint256 amount) public traderRebateClaimable;
+
+    /// @notice Accrued LP rewards per pool (accounting only)
+    mapping(bytes32 poolId => uint256 amount) public lpRewardsAccrued;
+
+    /// @notice Accrued protocol fees per pool (accounting only)
+    mapping(bytes32 poolId => uint256 amount) public protocolFeesAccrued;
 
     /// @notice Replay protection: tracks which orders have been processed
     mapping(bytes32 orderId => bool processed) public processedOrders;
@@ -177,6 +201,7 @@ contract ShadowSwapHook is BaseHook, Ownable {
         uint256 totalCaptured;
         uint256 lpShare;
         uint256 traderRebate;
+        uint256 protocolShare;
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -219,6 +244,28 @@ contract ShadowSwapHook is BaseHook, Ownable {
         uint256 traderRebate
     );
 
+    /// @notice Emitted when Trader-first allocation is applied for a swap
+    /// @param poolId The pool where the swap occurred
+    /// @param blockNumber Block number when allocation was recorded
+    /// @param trader The trader attributed for rebate accounting
+    /// @param captured Estimated captured value for this swap (placeholder until full settlement)
+    /// @param traderLossEstimate Estimated trader shortfall vs oracle fair price (0 if oracle unset)
+    /// @param traderCompensation Amount allocated to make trader whole (up to captured)
+    /// @param lpReward Amount allocated to LPs from the remaining captured value
+    /// @param protocolFee Amount allocated to the protocol treasury from the remaining captured value
+    /// @param fairPriceX18 Oracle fair price used (tokenOut per tokenIn), scaled by 1e18
+    event TraderFirstAllocated(
+        bytes32 indexed poolId,
+        uint256 indexed blockNumber,
+        address indexed trader,
+        uint256 captured,
+        uint256 traderLossEstimate,
+        uint256 traderCompensation,
+        uint256 lpReward,
+        uint256 protocolFee,
+        uint256 fairPriceX18
+    );
+
     /// @notice Emitted when the service manager address is updated
     /// @param oldManager Previous service manager address
     /// @param newManager New service manager address
@@ -227,6 +274,12 @@ contract ShadowSwapHook is BaseHook, Ownable {
     /// @notice Emitted when the contract is paused or unpaused
     /// @param isPaused New pause state
     event PauseStateChanged(bool isPaused);
+
+    /// @notice Emitted when the oracle is updated
+    event PriceOracleUpdated(address indexed oldOracle, address indexed newOracle);
+
+    /// @notice Emitted when the protocol treasury is updated
+    event ProtocolTreasuryUpdated(address indexed oldTreasury, address indexed newTreasury);
 
     // ═══════════════════════════════════════════════════════════════════════════
     // MODIFIERS
@@ -279,6 +332,7 @@ contract ShadowSwapHook is BaseHook, Ownable {
         address _serviceManager
     ) BaseHook(_poolManager) Ownable(msg.sender) {
         serviceManager = _serviceManager;
+        protocolTreasury = msg.sender;
         _updateMovingAverage();
     }
 
@@ -330,6 +384,25 @@ contract ShadowSwapHook is BaseHook, Ownable {
         address oldManager = serviceManager;
         serviceManager = newServiceManager;
         emit ServiceManagerUpdated(oldManager, newServiceManager);
+    }
+
+    /**
+     * @notice Sets the price oracle used for Trader-first loss estimation
+     * @dev Oracle should return token1PerToken0 price scaled by 1e18 for the pool.
+     */
+    function setPriceOracle(address newOracle) external onlyOwner {
+        address oldOracle = priceOracle;
+        priceOracle = newOracle;
+        emit PriceOracleUpdated(oldOracle, newOracle);
+    }
+
+    /**
+     * @notice Sets the protocol treasury address
+     */
+    function setProtocolTreasury(address newTreasury) external onlyOwner {
+        address oldTreasury = protocolTreasury;
+        protocolTreasury = newTreasury;
+        emit ProtocolTreasuryUpdated(oldTreasury, newTreasury);
     }
 
     /**
@@ -416,16 +489,15 @@ contract ShadowSwapHook is BaseHook, Ownable {
      * @dev Encrypts order details, validates, and queues for matching
      * @param sender Address initiating the swap
      * @param key Pool key for the swap
-     * @param params Swap parameters
      * @param hookData Encoded encrypted order data
      * @return selector Function selector
-     * @return delta BeforeSwapDelta for async pattern
+     * @return delta BeforeSwapDelta hook delta (kept zero to avoid flash-accounting settlement requirements)
      * @return dynamicFee Calculated dynamic fee
      */
     function _beforeSwap(
         address sender,
         PoolKey calldata key,
-        SwapParams calldata params,
+        SwapParams calldata,
         bytes calldata hookData
     )
         internal
@@ -507,10 +579,9 @@ contract ShadowSwapHook is BaseHook, Ownable {
             );
         }
 
-        // 6. Return delta for async swap pattern
-        BeforeSwapDelta returnDelta = toBeforeSwapDelta(int128(-params.amountSpecified), 0);
-
-        return (this.beforeSwap.selector, returnDelta, dynamicFee);
+        // 6. Uniswap v4 uses flash accounting: non-zero hook deltas must be settled/taken.
+        // ShadowSwap currently records encrypted intent + AVS tasking without mutating pool deltas here.
+        return (this.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, dynamicFee);
     }
 
     /**
@@ -548,10 +619,17 @@ contract ShadowSwapHook is BaseHook, Ownable {
         }
 
         // Capture MEV
-        _captureMEV(key, params, delta);
+        address trader = msgSender();
+        if (trader == address(0)) trader = sender;
+        _captureMEV(key, params, delta, trader);
 
         // Update gas price moving average
         _updateMovingAverage();
+
+        // Clear transient sender slot for composability safety
+        assembly {
+            tstore(MSG_SENDER_SLOT, 0)
+        }
 
         return (this.afterSwap.selector, 0);
     }
@@ -618,7 +696,8 @@ contract ShadowSwapHook is BaseHook, Ownable {
     function _captureMEV(
         PoolKey calldata key,
         SwapParams calldata params,
-        BalanceDelta delta
+        BalanceDelta delta,
+        address trader
     ) internal {
         bytes32 poolIdBytes = PoolId.unwrap(key.toId());
 
@@ -628,17 +707,36 @@ contract ShadowSwapHook is BaseHook, Ownable {
             : Currency.unwrap(key.currency1);
         _lastExecutionBlock[token] = block.number;
 
-        // Calculate captured MEV (simplified: 1 basis point of volume)
+        // Calculate captured value (placeholder: 1 basis point of volume).
+        // In production this should be based on measurable MEV savings / match surplus.
         int128 amount0 = delta.amount0();
         uint256 captured = uint256(int256(amount0 > 0 ? amount0 : -amount0)) / BPS_DENOMINATOR;
 
         if (captured > 0) {
             MEVCapture storage capture = mevCaptures[poolIdBytes][block.number];
 
-            // Effects: Update state before any potential interactions
+            // Trader-first allocation:
+            // 1) Estimate the trader's loss versus a fair price reference (oracle).
+            // 2) Compensate trader up to `captured`.
+            // 3) Split the remainder between LPs and protocol treasury.
+            (uint256 traderLossEstimate, uint256 fairPriceX18,,) = _estimateTraderLoss(key, params, delta);
+
+            uint256 traderCompensation = traderLossEstimate < captured ? traderLossEstimate : captured;
+            uint256 remaining = captured - traderCompensation;
+
+            // Remainder split: LPs + Protocol (must sum to 100%)
+            uint256 lpReward = (remaining * LP_REMAINDER_BPS) / BPS_DENOMINATOR;
+            uint256 protocolFee = remaining - lpReward;
+
+            // Effects: update state (accounting)
             capture.totalCaptured += captured;
-            capture.lpShare = (capture.totalCaptured * LP_MEV_SHARE_BPS) / BPS_DENOMINATOR;
-            capture.traderRebate = capture.totalCaptured - capture.lpShare;
+            capture.traderRebate += traderCompensation;
+            capture.lpShare += lpReward;
+            capture.protocolShare += protocolFee;
+
+            traderRebateClaimable[trader] += traderCompensation;
+            lpRewardsAccrued[poolIdBytes] += lpReward;
+            protocolFeesAccrued[poolIdBytes] += protocolFee;
 
             emit MEVCaptured(
                 poolIdBytes,
@@ -647,7 +745,68 @@ contract ShadowSwapHook is BaseHook, Ownable {
                 capture.lpShare,
                 capture.traderRebate
             );
+
+            emit TraderFirstAllocated(
+                poolIdBytes,
+                block.number,
+                trader,
+                captured,
+                traderLossEstimate,
+                traderCompensation,
+                lpReward,
+                protocolFee,
+                fairPriceX18
+            );
         }
+    }
+
+    /**
+     * @notice Estimates a trader's loss vs an oracle fair price reference
+     * @dev Oracle must return token1PerToken0 price scaled by 1e18 for the pool.
+     *      For oneForZero swaps, we invert the oracle price to get token0PerToken1.
+     *
+     * Returns zeros if oracle is unset, price is zero, or swap deltas are unexpected.
+     */
+    function _estimateTraderLoss(
+        PoolKey calldata key,
+        SwapParams calldata params,
+        BalanceDelta delta
+    ) internal view returns (uint256 loss, uint256 fairPriceX18, uint256 amountIn, uint256 amountOut) {
+        address oracle = priceOracle;
+        if (oracle == address(0)) return (0, 0, 0, 0);
+
+        bytes32 poolIdBytes = PoolId.unwrap(key.toId());
+
+        // Interface inline to avoid new file churn
+        (bool ok, bytes memory data) = oracle.staticcall(
+            abi.encodeWithSignature("getPriceX18(bytes32)", poolIdBytes)
+        );
+        if (!ok || data.length < 32) return (0, 0, 0, 0);
+
+        uint256 token1PerToken0X18 = abi.decode(data, (uint256));
+        if (token1PerToken0X18 == 0) return (0, 0, 0, 0);
+
+        int128 d0 = delta.amount0();
+        int128 d1 = delta.amount1();
+
+        // We interpret deltas as pool balance changes:
+        // - For zeroForOne: pool receives token0 (d0 > 0) and pays token1 (d1 < 0)
+        // - For oneForZero: pool receives token1 (d1 > 0) and pays token0 (d0 < 0)
+        if (params.zeroForOne) {
+            if (d0 <= 0 || d1 >= 0) return (0, 0, 0, 0);
+            amountIn = uint256(int256(d0));
+            amountOut = uint256(int256(-d1));
+            fairPriceX18 = token1PerToken0X18; // token1 per token0
+        } else {
+            if (d1 <= 0 || d0 >= 0) return (0, 0, 0, 0);
+            amountIn = uint256(int256(d1));
+            amountOut = uint256(int256(-d0));
+            // invert to token0 per token1, scaled to 1e18
+            fairPriceX18 = (1e36) / token1PerToken0X18;
+        }
+
+        uint256 fairOut = (amountIn * fairPriceX18) / 1e18;
+        if (fairOut > amountOut) loss = fairOut - amountOut;
     }
 
     /**
